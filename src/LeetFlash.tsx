@@ -557,6 +557,7 @@ export function LeetFlash() {
             <ScrollView
               ref={listRef}
               horizontal
+              scrollEnabled={false}
               pagingEnabled
               snapToInterval={width}
               snapToAlignment="start"
