@@ -15,6 +15,7 @@ import {
   View
 } from "react-native";
 import { fetchProblemPage } from "./lib/problemFeed";
+import type { ProblemPage } from "./lib/problemFeed";
 import type { LeetProblem } from "./data/problems";
 import {
   readQuestionNumberFromUrl,
@@ -86,6 +87,12 @@ export function LeetFlash() {
   const [foldState, setFoldState] = useState<FoldState>(() => readFoldState());
   const [pageStartedAt, setPageStartedAt] = useState(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [cardIds, setCardIds] = useState<number[]>([
+    initialQuestionId,
+    nextQuestionId(initialQuestionId, readStoredValue(randomModeKey) === "true"),
+    nextQuestionId(initialQuestionId + 1, readStoredValue(randomModeKey) === "true")
+  ]);
+  const [problemMap, setProblemMap] = useState<Record<number, LeetProblem>>({});
 
   const query = useInfiniteQuery({
     queryKey,
@@ -95,10 +102,24 @@ export function LeetFlash() {
       lastPage.nextCursor ?? undefined
   });
 
-  const problems = useMemo(
+  const queriedProblems = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],
     [query.data]
   );
+
+  useEffect(() => {
+    if (queriedProblems.length === 0) return;
+
+    setProblemMap((current) => {
+      const next = { ...current };
+      queriedProblems.forEach((problem) => {
+        next[problem.id] = problem;
+      });
+      return next;
+    });
+  }, [queriedProblems]);
+
+  const problems = cardIds.map((id) => problemMap[id]).filter(Boolean);
 
   const activeProblem = problems[index];
 
@@ -111,10 +132,10 @@ export function LeetFlash() {
   }, []);
 
   useEffect(() => {
-    if (problems.length > 0 && problems.length - index <= 4 && query.hasNextPage) {
-      void query.fetchNextPage();
+    if (problems.length > 0 && problems.length - index <= 2) {
+      appendNextCard();
     }
-  }, [index, problems.length, query]);
+  }, [index, problems.length, randomMode]);
 
   useEffect(() => {
     void queryClient.prefetchInfiniteQuery({
@@ -235,22 +256,35 @@ export function LeetFlash() {
 
     const page = await fetchProblemPage(normalized - 1);
     queryClient.setQueryData(queryKey, (current: typeof query.data) => {
-      if (!current) {
-        return { pageParams: [normalized - 1], pages: [page] };
-      }
-
-      return {
-        ...current,
-        pageParams: [...current.pageParams, normalized - 1],
-        pages: [...current.pages, page]
-      };
+      return appendQueryPage(current, normalized - 1, page);
     });
+    setProblemMap((current) => ({ ...current, [normalized]: page.items[0] }));
+    setCardIds((current) => [...current, normalized]);
 
     setTimeout(() => {
-      const nextIndex = problems.length;
+      const nextIndex = cardIds.length;
       setActiveIndex(nextIndex);
       listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
     }, 50);
+  };
+
+  const appendNextCard = () => {
+    setCardIds((current) => {
+      const lastId = current[current.length - 1] ?? initialQuestionId;
+      const nextId = nextQuestionId(lastId, randomMode, new Set(current));
+
+      if (current.includes(nextId)) return current;
+
+      void fetchProblemPage(nextId - 1).then((page) => {
+        const problem = page.items.find((item) => item.id === nextId) ?? page.items[0];
+        setProblemMap((map) => ({ ...map, [nextId]: problem }));
+        queryClient.setQueryData(queryKey, (existing: typeof query.data) =>
+          appendQueryPage(existing, nextId - 1, { ...page, items: [problem] })
+        );
+      });
+
+      return [...current, nextId];
+    });
   };
 
   const updateSeen = (nextSeen: boolean) => {
@@ -279,8 +313,16 @@ export function LeetFlash() {
 
   const toggleRandomMode = () => {
     const nextRandomMode = !randomMode;
+    const currentId = activeProblem?.id ?? initialQuestionId;
     setRandomMode(nextRandomMode);
     writeStoredValue(randomModeKey, String(nextRandomMode));
+    setCardIds([
+      currentId,
+      nextQuestionId(currentId, nextRandomMode),
+      nextQuestionId(currentId + 1, nextRandomMode)
+    ]);
+    setActiveIndex(0);
+    listRef.current?.scrollTo({ x: 0, animated: false });
 
     if (sessionUserId) {
       void supabase.from("user_settings").upsert({
@@ -480,8 +522,8 @@ export function LeetFlash() {
               onMomentumScrollEnd={(event) => {
                 const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
                 setActiveIndex(nextIndex);
-                if (problems.length - nextIndex <= 4 && query.hasNextPage) {
-                  void query.fetchNextPage();
+                if (problems.length - nextIndex <= 2) {
+                  appendNextCard();
                 }
               }}
               onScrollEndDrag={(event) => {
@@ -678,6 +720,35 @@ function MiniSkeleton({ label }: { label: string }) {
 function randomQuestionId(currentId?: number): number {
   const next = Math.floor(Math.random() * 3934) + 1;
   return next === currentId ? randomQuestionId(currentId) : next;
+}
+
+function nextQuestionId(currentId: number, randomMode: boolean, existing = new Set<number>()) {
+  if (!randomMode) return currentId >= 3934 ? 1 : currentId + 1;
+
+  let next = randomQuestionId(currentId);
+  let attempts = 0;
+  while (existing.has(next) && attempts < 20) {
+    next = randomQuestionId(currentId);
+    attempts += 1;
+  }
+
+  return next;
+}
+
+function appendQueryPage(
+  current: ReturnType<typeof useInfiniteQuery<ProblemPage>>["data"] | undefined,
+  pageParam: number,
+  page: ProblemPage
+) {
+  if (!current) {
+    return { pageParams: [pageParam], pages: [page] };
+  }
+
+  return {
+    ...current,
+    pageParams: [...current.pageParams, pageParam],
+    pages: [...current.pages, page]
+  };
 }
 
 function isCompleteCard(card: unknown): card is QuestionSolution {
