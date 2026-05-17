@@ -68,10 +68,8 @@ type QuestionSolution = {
 
 export function LeetFlash() {
   const queryClient = useQueryClient();
-  const listRef = useRef<ScrollView>(null);
   const requestedSolutionIds = useRef(new Set<number>());
   const loadedSolutionIds = useRef(new Set<number>());
-  const pendingScrollQuestionId = useRef<number | null>(null);
   const initialQuestionId =
     readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
   const initialCursor = Math.max(initialQuestionId - 1, 0);
@@ -143,20 +141,6 @@ export function LeetFlash() {
       appendNextCard();
     }
   }, [index, cardIds.length, randomMode]);
-
-  useEffect(() => {
-    const pendingId = pendingScrollQuestionId.current;
-    if (!pendingId) return;
-
-    const nextIndex = cardIds.findIndex((id) => id === pendingId);
-    if (nextIndex < 0) return;
-
-    pendingScrollQuestionId.current = null;
-    setActiveIndex(nextIndex);
-    requestAnimationFrame(() => {
-      listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
-    });
-  }, [cardIds, width]);
 
   useEffect(() => {
     cardIds.slice(index, index + 3).forEach((id) => {
@@ -270,22 +254,20 @@ export function LeetFlash() {
 
     const clamped = Math.max(0, Math.min(nextIndex, cardIds.length - 1));
     setActiveIndex(clamped);
-    listRef.current?.scrollTo({ x: clamped * width, animated: true });
   };
 
   const setActiveIndex = (nextIndex: number) => {
     const clamped = Math.max(0, Math.min(nextIndex, Math.max(cardIds.length - 1, 0)));
-    setIndex((current) => {
-      if (current === clamped) return current;
-      setPageStartedAt(Date.now());
-      setElapsedSeconds(0);
-      return clamped;
-    });
+    activateIndex(clamped);
   };
 
-  const syncIndexFromOffset = (offsetX: number, containerWidth = width) => {
-    const safeWidth = Math.max(containerWidth, 1);
-    setActiveIndex(Math.round(offsetX / safeWidth));
+  const activateIndex = (nextIndex: number) => {
+    setIndex((current) => {
+      if (current === nextIndex) return current;
+      setPageStartedAt(Date.now());
+      setElapsedSeconds(0);
+      return nextIndex;
+    });
   };
 
   const goNext = () => {
@@ -294,7 +276,16 @@ export function LeetFlash() {
       return;
     }
 
-    goTo(index + 1);
+    void goToQuestionNumber(nextQuestionId(activeQuestionId, false));
+  };
+
+  const goPrevious = () => {
+    if (randomMode && index > 0) {
+      goTo(index - 1);
+      return;
+    }
+
+    void goToQuestionNumber(previousQuestionId(activeQuestionId));
   };
 
   const goToQuestionNumber = async (questionId: number) => {
@@ -312,10 +303,17 @@ export function LeetFlash() {
     });
     const problem = page.items.find((item) => item.id === normalized) ?? page.items[0];
     setProblemMap((current) => ({ ...current, [normalized]: problem }));
-    pendingScrollQuestionId.current = normalized;
-    setCardIds((current) =>
-      current.includes(normalized) ? current : [...current, normalized]
-    );
+    setCardIds((current) => {
+      const existing = current.findIndex((id) => id === normalized);
+      if (existing >= 0) {
+        setActiveIndex(existing);
+        return current;
+      }
+
+      const next = [...current.slice(0, index + 1), normalized, ...current.slice(index + 1)];
+      activateIndex(index + 1);
+      return next;
+    });
   };
 
   const appendNextCard = () => {
@@ -377,7 +375,6 @@ export function LeetFlash() {
       nextQuestionId(currentId + 1, nextRandomMode)
     ]);
     setActiveIndex(0);
-    listRef.current?.scrollTo({ x: 0, animated: false });
 
     if (sessionUserId) {
       void supabase.from("user_settings").upsert({
@@ -471,64 +468,20 @@ export function LeetFlash() {
               <ActivityIndicator color="#111827" />
             </View>
           ) : (
-            <ScrollView
-              ref={listRef}
-              horizontal
-              scrollEnabled={false}
-              pagingEnabled
-              snapToInterval={width}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              disableIntervalMomentum
-              bounces={false}
-              showsHorizontalScrollIndicator={false}
-              scrollEventThrottle={16}
-              onMomentumScrollEnd={(event) => {
-                const nextIndex = Math.round(
-                  event.nativeEvent.contentOffset.x /
-                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
-                );
-                syncIndexFromOffset(
-                  event.nativeEvent.contentOffset.x,
-                  event.nativeEvent.layoutMeasurement.width
-                );
-                if (cardIds.length - nextIndex <= 2) {
-                  appendNextCard();
-                }
-              }}
-              onScrollEndDrag={(event) => {
-                const nextIndex = Math.round(
-                  event.nativeEvent.contentOffset.x /
-                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
-                );
-                syncIndexFromOffset(
-                  event.nativeEvent.contentOffset.x,
-                  event.nativeEvent.layoutMeasurement.width
-                );
-                listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
-              }}
-            >
-              {problems.map((item, itemIndex) => {
-                const renderedItem = withGeneratedCard(item, solutionMap[item.id]);
-
-                return (
-                  <View
-                    key={`${item.id}-${itemIndex}`}
-                    style={[styles.itemFrame, { width, height: listHeight }]}
-                  >
-                    <ProblemCard
-                      problem={renderedItem}
-                      height={listHeight}
-                      isGeneratingSolution={Boolean(generatingIds[item.id])}
-                      foldState={foldState}
-                      onToggleFold={updateFoldState}
-                      hideSolutionComments={hideSolutionComments}
-                      onToggleHideSolutionComments={updateHideSolutionComments}
-                    />
-                  </View>
-                );
-              })}
-            </ScrollView>
+            <View style={[styles.itemFrame, { width, height: listHeight }]}>
+              <ProblemCard
+                problem={withGeneratedCard(
+                  problems[index] ?? makeLoadingProblem(activeQuestionId),
+                  solutionMap[activeQuestionId]
+                )}
+                height={listHeight}
+                isGeneratingSolution={Boolean(generatingIds[activeQuestionId])}
+                foldState={foldState}
+                onToggleFold={updateFoldState}
+                hideSolutionComments={hideSolutionComments}
+                onToggleHideSolutionComments={updateHideSolutionComments}
+              />
+            </View>
           )}
         </View>
 
@@ -536,7 +489,7 @@ export function LeetFlash() {
           <Pressable
             accessibilityLabel="Previous problem"
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={() => goTo(index - 1)}
+            onPress={goPrevious}
           >
             <Text style={styles.chevron}>‹</Text>
           </Pressable>
@@ -826,6 +779,10 @@ function MiniSkeleton({ label }: { label: string }) {
 function randomQuestionId(currentId?: number): number {
   const next = Math.floor(Math.random() * 3934) + 1;
   return next === currentId ? randomQuestionId(currentId) : next;
+}
+
+function previousQuestionId(currentId: number) {
+  return currentId <= 1 ? 3934 : currentId - 1;
 }
 
 function nextQuestionId(currentId: number, randomMode: boolean, existing = new Set<number>()) {
