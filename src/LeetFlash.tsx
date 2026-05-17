@@ -65,6 +65,8 @@ type QuestionSolution = {
 export function LeetFlash() {
   const queryClient = useQueryClient();
   const listRef = useRef<ScrollView>(null);
+  const requestedSolutionIds = useRef(new Set<number>());
+  const loadedSolutionIds = useRef(new Set<number>());
   const initialQuestionId =
     readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
   const initialCursor = Math.max(initialQuestionId - 1, 0);
@@ -296,9 +298,17 @@ export function LeetFlash() {
   };
 
   const loadOrGenerateSolution = async (problem: LeetProblem) => {
-    if (solutionMap[problem.id] || generatingIds[problem.id] || !hasSupabaseConfig) {
+    if (
+      solutionMap[problem.id] ||
+      generatingIds[problem.id] ||
+      requestedSolutionIds.current.has(problem.id) ||
+      loadedSolutionIds.current.has(problem.id) ||
+      !hasSupabaseConfig
+    ) {
       return;
     }
+
+    requestedSolutionIds.current.add(problem.id);
 
     const existing = await supabase
       .from("question_solutions")
@@ -307,6 +317,8 @@ export function LeetFlash() {
       .maybeSingle();
 
     if (isCompleteCard(existing.data)) {
+      loadedSolutionIds.current.add(problem.id);
+      requestedSolutionIds.current.delete(problem.id);
       setSolutionMap((current) => ({
         ...current,
         [problem.id]: existing.data as QuestionSolution
@@ -315,29 +327,33 @@ export function LeetFlash() {
     }
 
     setGeneratingIds((current) => ({ ...current, [problem.id]: true }));
-    const generated = await supabase.functions.invoke("generate-solution", {
-      body: {
-        question: {
-          id: problem.id,
-          slug: problem.slug,
-          title: problem.title,
-          difficulty: problem.difficulty,
-          prompt: problem.prompt,
-          examples: problem.examples,
-          constraints: problem.constraints,
-          starterCode: problem.starterCode
+    try {
+      const generated = await supabase.functions.invoke("generate-solution", {
+        body: {
+          question: {
+            id: problem.id,
+            slug: problem.slug,
+            title: problem.title,
+            difficulty: problem.difficulty,
+            prompt: problem.prompt,
+            examples: problem.examples,
+            constraints: problem.constraints,
+            starterCode: problem.starterCode
+          }
         }
+      });
+
+      if (generated.data?.solution) {
+        loadedSolutionIds.current.add(problem.id);
+        setSolutionMap((current) => ({
+          ...current,
+          [problem.id]: generated.data.solution as QuestionSolution
+        }));
       }
-    });
-
-    if (generated.data?.solution) {
-      setSolutionMap((current) => ({
-        ...current,
-        [problem.id]: generated.data.solution as QuestionSolution
-      }));
+    } finally {
+      requestedSolutionIds.current.delete(problem.id);
+      setGeneratingIds((current) => ({ ...current, [problem.id]: false }));
     }
-
-    setGeneratingIds((current) => ({ ...current, [problem.id]: false }));
   };
 
   const openProblem = () => {
