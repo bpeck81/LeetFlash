@@ -7,6 +7,8 @@ type GenerateRequest = {
     title: string;
     difficulty: "Easy" | "Medium" | "Hard";
     prompt: string;
+    examples?: string;
+    constraints?: string;
     starterCode?: string;
   };
 };
@@ -48,7 +50,13 @@ Deno.serve(async (request) => {
       .maybeSingle();
 
     if (existing.error) throw existing.error;
-    if (existing.data?.solution && existing.data.approach?.length) {
+    if (
+      existing.data?.prompt &&
+      existing.data?.examples &&
+      existing.data?.constraints_text &&
+      existing.data?.solution &&
+      existing.data?.approach?.length
+    ) {
       return json({ solution: existing.data });
     }
 
@@ -59,6 +67,8 @@ Deno.serve(async (request) => {
         title: question.title,
         difficulty: question.difficulty,
         prompt: question.prompt,
+        examples: question.examples ?? "",
+        constraints_text: question.constraints ?? "",
         starter_code: question.starterCode ?? "class Solution:\n    pass"
       },
       { onConflict: "question_id" }
@@ -73,7 +83,9 @@ Deno.serve(async (request) => {
           slug: question.slug,
           title: question.title,
           difficulty: question.difficulty,
-          prompt: question.prompt,
+          prompt: generated.prompt,
+          examples: generated.examples,
+          constraints_text: generated.constraints,
           starter_code: question.starterCode ?? "class Solution:\n    pass",
           approach: generated.approach,
           solution: generated.solution,
@@ -139,7 +151,7 @@ async function generateWithOpenAI(
     body: JSON.stringify({
       model,
       instructions:
-        "You write concise LeetCode study cards. Return only valid JSON matching the schema. The solution must be Python 3 in LeetCode class Solution style. Keep approach bullets short and actionable.",
+        "You write concise coding interview study cards. Return only valid JSON matching the schema. The solution must be Python 3 in LeetCode class Solution style. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
       input: [
         {
           role: "user",
@@ -151,8 +163,14 @@ Difficulty: ${question.difficulty}
 Starter code:
 ${question.starterCode ?? "class Solution:\n    pass"}
 
-Prompt:
-${question.prompt}`
+Known prompt:
+${question.prompt}
+
+Known examples:
+${question.examples || "Not provided"}
+
+Known constraints:
+${question.constraints || "Not provided"}`
             }
           ]
         }
@@ -166,6 +184,9 @@ ${question.prompt}`
             type: "object",
             additionalProperties: false,
             properties: {
+              prompt: { type: "string" },
+              examples: { type: "string" },
+              constraints: { type: "string" },
               approach: {
                 type: "array",
                 minItems: 3,
@@ -174,7 +195,7 @@ ${question.prompt}`
               },
               solution: { type: "string" }
             },
-            required: ["approach", "solution"]
+            required: ["prompt", "examples", "constraints", "approach", "solution"]
           }
         }
       }
@@ -188,9 +209,18 @@ ${question.prompt}`
 
   const payload = await response.json();
   const text = extractOutputText(payload);
-  const parsed = JSON.parse(text) as { approach: string[]; solution: string };
+  const parsed = JSON.parse(text) as {
+    prompt: string;
+    examples: string;
+    constraints: string;
+    approach: string[];
+    solution: string;
+  };
 
   return {
+    prompt: parsed.prompt,
+    examples: parsed.examples,
+    constraints: parsed.constraints,
     approach: parsed.approach,
     solution: parsed.solution
   };

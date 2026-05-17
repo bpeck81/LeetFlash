@@ -56,6 +56,9 @@ const missingConstraintsText =
 
 type QuestionSolution = {
   question_id: number;
+  prompt: string;
+  examples: string;
+  constraints_text: string;
   approach: string[];
   solution: string;
   starter_code: string;
@@ -72,7 +75,6 @@ export function LeetFlash() {
     Math.max(Dimensions.get("window").height - 56, 320)
   );
   const [index, setIndex] = useState(0);
-  const [showSolution, setShowSolution] = useState(true);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [seen, setSeen] = useState(false);
   const [randomMode, setRandomMode] = useState(
@@ -104,6 +106,9 @@ export function LeetFlash() {
     activeProblem && activeSolution
       ? {
           ...activeProblem,
+          prompt: activeSolution.prompt || activeProblem.prompt,
+          examples: activeSolution.examples,
+          constraints: activeSolution.constraints_text,
           bullets: activeSolution.approach,
           solution: activeSolution.solution,
           starterCode: activeSolution.starter_code,
@@ -289,19 +294,15 @@ export function LeetFlash() {
 
     const existing = await supabase
       .from("question_solutions")
-      .select("question_id, approach, solution, starter_code")
+      .select("question_id, prompt, examples, constraints_text, approach, solution, starter_code")
       .eq("question_id", problem.id)
       .maybeSingle();
 
-    if (existing.data?.solution && existing.data.approach?.length) {
+    if (isCompleteCard(existing.data)) {
       setSolutionMap((current) => ({
         ...current,
         [problem.id]: existing.data as QuestionSolution
       }));
-      return;
-    }
-
-    if (problem.hasSolution && problem.solution && problem.bullets.length) {
       return;
     }
 
@@ -314,6 +315,8 @@ export function LeetFlash() {
           title: problem.title,
           difficulty: problem.difficulty,
           prompt: problem.prompt,
+          examples: problem.examples,
+          constraints: problem.constraints,
           starterCode: problem.starterCode
         }
       }
@@ -476,12 +479,10 @@ export function LeetFlash() {
                     <ProblemCard
                       problem={item.id === renderedProblem?.id ? renderedProblem : item}
                       height={listHeight}
-                      isGeneratingSolution={Boolean(generatingIds[item.id])}
-                      foldState={foldState}
-                      onToggleFold={updateFoldState}
-                      showSolution={showSolution}
-                      onToggleSolution={() => setShowSolution((value) => !value)}
-                    />
+                    isGeneratingSolution={Boolean(generatingIds[item.id])}
+                    foldState={foldState}
+                    onToggleFold={updateFoldState}
+                  />
                   </View>
                 ))}
             </ScrollView>
@@ -498,8 +499,6 @@ type ProblemCardProps = {
   isGeneratingSolution: boolean;
   foldState: FoldState;
   onToggleFold: (key: keyof FoldState) => void;
-  showSolution: boolean;
-  onToggleSolution: () => void;
 };
 
 function ProblemCard({
@@ -507,11 +506,11 @@ function ProblemCard({
   height,
   isGeneratingSolution,
   foldState,
-  onToggleFold,
-  showSolution,
-  onToggleSolution
+  onToggleFold
 }: ProblemCardProps) {
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
+  const examples = problem.examples ?? promptParts.examples;
+  const constraints = problem.constraints ?? promptParts.constraints;
 
   return (
     <ScrollView
@@ -532,7 +531,9 @@ function ProblemCard({
           </View>
         </View>
 
-        <Text style={styles.prompt}>{promptParts.statement}</Text>
+        <View style={styles.statementBox}>
+          <Text style={styles.prompt}>{promptParts.statement}</Text>
+        </View>
 
         <FoldableSection
           title="Examples"
@@ -540,7 +541,7 @@ function ProblemCard({
           onToggle={() => onToggleFold("examples")}
         >
           <Text style={styles.promptDetail}>
-            {promptParts.examples || missingExamplesText}
+            {examples || missingExamplesText}
           </Text>
         </FoldableSection>
 
@@ -550,7 +551,7 @@ function ProblemCard({
           onToggle={() => onToggleFold("constraints")}
         >
           <Text style={styles.promptDetail}>
-            {promptParts.constraints || missingConstraintsText}
+            {constraints || missingConstraintsText}
           </Text>
         </FoldableSection>
 
@@ -581,24 +582,13 @@ function ProblemCard({
           open={foldState.solution}
           onToggle={() => onToggleFold("solution")}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={showSolution ? "Hide solution" : "Show solution"}
-            style={({ pressed }) => [
-              styles.solution,
-              !showSolution && styles.solutionHidden,
-              pressed && styles.pressed
-            ]}
-            onPress={onToggleSolution}
-          >
+          <View style={styles.solution}>
             {isGeneratingSolution ? (
               <SolutionSkeleton />
-            ) : showSolution ? (
-              <SyntaxHighlightedCode code={problem.solution} />
             ) : (
-              <Text style={styles.hiddenText}>Solution hidden</Text>
+              <SyntaxHighlightedCode code={problem.solution} />
             )}
-          </Pressable>
+          </View>
         </FoldableSection>
       </View>
 
@@ -638,6 +628,18 @@ function SolutionSkeleton() {
 function randomQuestionId(currentId?: number): number {
   const next = Math.floor(Math.random() * 3934) + 1;
   return next === currentId ? randomQuestionId(currentId) : next;
+}
+
+function isCompleteCard(card: unknown): card is QuestionSolution {
+  const candidate = card as Partial<QuestionSolution> | null;
+
+  return Boolean(
+    candidate?.prompt &&
+      candidate?.examples &&
+      candidate?.constraints_text &&
+      candidate?.solution &&
+      candidate?.approach?.length
+  );
 }
 
 function difficultyStyle(difficulty: LeetProblem["difficulty"]) {
@@ -1065,6 +1067,13 @@ const styles = StyleSheet.create({
     color: "#1f2937",
     fontSize: 16,
     lineHeight: 25
+  },
+  statementBox: {
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    backgroundColor: "#ffffff"
   },
   promptDetail: {
     color: "#334155",

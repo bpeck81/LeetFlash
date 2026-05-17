@@ -5,7 +5,7 @@ export const supabaseUrl =
   "https://ijklazicwpvvrnjjbggt.supabase.co";
 export const supabaseAnonKey =
   (process.env as Record<string, string | undefined>)["EXPO_PUBLIC_SUPABASE_ANON_KEY"] ??
-  "";
+  "sb_publishable_1emcq58JaMgwE1nv6nAfdA_EN2aZ7qy";
 
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 

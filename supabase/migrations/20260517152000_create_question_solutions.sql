@@ -4,6 +4,8 @@ create table if not exists public.question_solutions (
   title text not null,
   difficulty text not null check (difficulty in ('Easy', 'Medium', 'Hard')),
   prompt text not null default '',
+  examples text not null default '',
+  constraints_text text not null default '',
   starter_code text not null default 'class Solution:' || chr(10) || '    pass',
   approach text[] not null default '{}',
   solution text not null default '',
@@ -12,6 +14,12 @@ create table if not exists public.question_solutions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.question_solutions
+add column if not exists examples text not null default '';
+
+alter table public.question_solutions
+add column if not exists constraints_text text not null default '';
 
 create table if not exists public.user_question_progress (
   user_id uuid not null references auth.users(id) on delete cascade,

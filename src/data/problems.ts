@@ -4,6 +4,8 @@ export type LeetProblem = {
   difficulty: "Easy" | "Medium" | "Hard";
   slug: string;
   prompt: string;
+  examples?: string;
+  constraints?: string;
   bullets: string[];
   solution: string;
   starterCode?: string;
