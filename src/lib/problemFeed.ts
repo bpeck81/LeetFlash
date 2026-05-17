@@ -9,7 +9,8 @@ export type ProblemPage = {
 const PAGE_SIZE = 6;
 const publicEnv = process.env as Record<string, string | undefined>;
 const API_BASE =
-  publicEnv["EXPO_PUBLIC_LEETFLASH_API_BASE"] ?? "http://localhost:8787";
+  publicEnv["EXPO_PUBLIC_LEETFLASH_API_BASE"] ??
+  "https://ijklazicwpvvrnjjbggt.supabase.co/functions/v1/leetcode-problems";
 
 export async function fetchProblemPage(cursor = 0): Promise<ProblemPage> {
   try {
