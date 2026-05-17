@@ -224,25 +224,12 @@ export function LeetFlash() {
     if (countedViewKeys.current.has(viewKey)) return;
     countedViewKeys.current.add(viewKey);
 
-    void supabase
-      .from("user_problem_views")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", sessionUserId)
-      .eq("question_id", activeQuestionId)
-      .then((result) => {
-        const previousCount = Number(result.count ?? 0);
-        const nextCount = previousCount + 1;
-        const nextSeen = previousCount > 0;
-        setSeen(nextSeen);
-        setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
-        writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
-
-        void supabase.from("user_problem_views").insert({
-          user_id: sessionUserId,
-          question_id: activeQuestionId,
-          source: "page"
-        });
-      });
+    void recordProblemView(sessionUserId, activeQuestionId).then((stats) => {
+      const nextSeen = stats.previousCount > 0;
+      setSeen(nextSeen);
+      setViewCounts((current) => ({ ...current, [activeQuestionId]: stats.count }));
+      writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
+    });
   }, [activeQuestionId, activeViewToken, sessionUserId]);
 
   useEffect(() => {
@@ -357,13 +344,18 @@ export function LeetFlash() {
 
     if (sessionUserId) {
       if (nextSeen) {
-        const nextCount = (viewCounts[activeQuestionId] ?? 0) + 1;
-        setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
-        void supabase.from("user_problem_views").insert({
-          user_id: sessionUserId,
-          question_id: activeQuestionId,
-          source: "manual"
-        });
+        void recordProblemView(sessionUserId, activeQuestionId, "manual").then(
+          (stats) => {
+            setViewCounts((current) => ({
+              ...current,
+              [activeQuestionId]: stats.count
+            }));
+          }
+        );
+        setViewCounts((current) => ({
+          ...current,
+          [activeQuestionId]: (current[activeQuestionId] ?? 0) + 1
+        }));
       } else {
         setViewCounts((current) => ({ ...current, [activeQuestionId]: 0 }));
         void supabase
@@ -903,6 +895,37 @@ function withGeneratedCard(problem: LeetProblem, solution?: QuestionSolution) {
     starterCode: solution.starter_code,
     hasSolution: true
   };
+}
+
+async function recordProblemView(
+  userId: string,
+  questionId: number,
+  source: "page" | "manual" = "page"
+) {
+  const before = await fetchProblemViewCount(userId, questionId);
+
+  const inserted = await supabase.from("user_problem_views").insert({
+    user_id: userId,
+    question_id: questionId,
+    source
+  });
+
+  if (inserted.error) {
+    return { count: before, previousCount: before };
+  }
+
+  const after = await fetchProblemViewCount(userId, questionId);
+  return { count: after, previousCount: before };
+}
+
+async function fetchProblemViewCount(userId: string, questionId: number) {
+  const result = await supabase
+    .from("user_problem_views")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("question_id", questionId);
+
+  return result.data?.length ?? 0;
 }
 
 function isPlaceholderProblem(problem: LeetProblem) {
