@@ -236,6 +236,11 @@ export function LeetFlash() {
     });
   };
 
+  const syncIndexFromOffset = (offsetX: number, containerWidth = width) => {
+    const safeWidth = Math.max(containerWidth, 1);
+    setActiveIndex(Math.round(offsetX / safeWidth));
+  };
+
   const goNext = () => {
     if (randomMode) {
       void goToQuestionNumber(randomQuestionId(activeProblem?.id));
@@ -520,15 +525,27 @@ export function LeetFlash() {
               showsHorizontalScrollIndicator={false}
               scrollEventThrottle={16}
               onMomentumScrollEnd={(event) => {
-                const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                setActiveIndex(nextIndex);
+                const nextIndex = Math.round(
+                  event.nativeEvent.contentOffset.x /
+                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
+                );
+                syncIndexFromOffset(
+                  event.nativeEvent.contentOffset.x,
+                  event.nativeEvent.layoutMeasurement.width
+                );
                 if (problems.length - nextIndex <= 2) {
                   appendNextCard();
                 }
               }}
               onScrollEndDrag={(event) => {
-                const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                setActiveIndex(nextIndex);
+                const nextIndex = Math.round(
+                  event.nativeEvent.contentOffset.x /
+                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
+                );
+                syncIndexFromOffset(
+                  event.nativeEvent.contentOffset.x,
+                  event.nativeEvent.layoutMeasurement.width
+                );
                 listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
               }}
             >
