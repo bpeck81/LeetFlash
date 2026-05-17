@@ -38,6 +38,7 @@ const codeNoWrapStyle =
 const lastQuestionKey = "leetflash:lastQuestionId";
 const randomModeKey = "leetflash:randomMode";
 const foldStateKey = "leetflash:foldState";
+const hideSolutionCommentsKey = "leetflash:hideSolutionComments";
 
 type FoldState = {
   examples: boolean;
@@ -88,6 +89,9 @@ export function LeetFlash() {
   const [solutionMap, setSolutionMap] = useState<Record<number, QuestionSolution>>({});
   const [generatingIds, setGeneratingIds] = useState<Record<number, boolean>>({});
   const [foldState, setFoldState] = useState<FoldState>(() => readFoldState());
+  const [hideSolutionComments, setHideSolutionComments] = useState(
+    readStoredValue(hideSolutionCommentsKey) === "true"
+  );
   const [pageStartedAt, setPageStartedAt] = useState(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [cardIds, setCardIds] = useState<number[]>([
@@ -357,6 +361,11 @@ export function LeetFlash() {
     });
   };
 
+  const updateHideSolutionComments = (nextValue: boolean) => {
+    setHideSolutionComments(nextValue);
+    writeStoredValue(hideSolutionCommentsKey, String(nextValue));
+  };
+
   const toggleRandomMode = () => {
     const nextRandomMode = !randomMode;
     const currentId = activeQuestionId;
@@ -513,6 +522,8 @@ export function LeetFlash() {
                       isGeneratingSolution={Boolean(generatingIds[item.id])}
                       foldState={foldState}
                       onToggleFold={updateFoldState}
+                      hideSolutionComments={hideSolutionComments}
+                      onToggleHideSolutionComments={updateHideSolutionComments}
                     />
                   </View>
                 );
@@ -623,6 +634,8 @@ type ProblemCardProps = {
   isGeneratingSolution: boolean;
   foldState: FoldState;
   onToggleFold: (key: keyof FoldState) => void;
+  hideSolutionComments: boolean;
+  onToggleHideSolutionComments: (nextValue: boolean) => void;
 };
 
 function ProblemCard({
@@ -630,9 +643,16 @@ function ProblemCard({
   height,
   isGeneratingSolution,
   foldState,
-  onToggleFold
+  onToggleFold,
+  hideSolutionComments,
+  onToggleHideSolutionComments
 }: ProblemCardProps) {
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
+  const renderedSolution = useMemo(
+    () =>
+      hideSolutionComments ? removePythonCommentLines(problem.solution) : problem.solution,
+    [hideSolutionComments, problem.solution]
+  );
   const needsGeneratedCard = isPlaceholderProblem(problem);
   const needsGeneratedPrompt = isPlaceholderPrompt(problem.prompt);
   const examples = problem.examples ?? promptParts.examples;
@@ -723,6 +743,27 @@ function ProblemCard({
           open={foldState.solution}
           onToggle={() => onToggleFold("solution")}
         >
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: hideSolutionComments }}
+            style={({ pressed }) => [
+              styles.solutionOption,
+              hideSolutionComments && styles.solutionOptionChecked,
+              pressed && styles.pressed
+            ]}
+            onPress={() => onToggleHideSolutionComments(!hideSolutionComments)}
+          >
+            <Text
+              style={[
+                styles.solutionOptionBox,
+                hideSolutionComments && styles.solutionOptionBoxChecked
+              ]}
+            >
+              {hideSolutionComments ? "✓" : ""}
+            </Text>
+            <Text style={styles.solutionOptionText}>Hide comments</Text>
+          </Pressable>
+
           <ScrollView
             horizontal
             nestedScrollEnabled
@@ -733,7 +774,7 @@ function ProblemCard({
             {isGeneratingSolution ? (
               <SolutionSkeleton />
             ) : (
-              <SyntaxHighlightedCode code={problem.solution} />
+              <SyntaxHighlightedCode code={renderedSolution} />
             )}
           </ScrollView>
         </FoldableSection>
@@ -992,6 +1033,15 @@ function getPracticeStarter(problem: LeetProblem) {
   const starter = problem.starterCode ?? problem.solution;
   const [classLine, signatureLine] = starter.split("\n");
   return `${classLine}\n${signatureLine}\n        `;
+}
+
+function removePythonCommentLines(code: string) {
+  return code
+    .split("\n")
+    .filter((line) => !line.includes("#"))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
 }
 
 function SyntaxHighlightedCode({ code }: { code: string }) {
@@ -1373,6 +1423,44 @@ const styles = StyleSheet.create({
     color: "#e8edf3",
     fontSize: 15,
     lineHeight: 22
+  },
+  solutionOption: {
+    alignSelf: "flex-start",
+    minHeight: 32,
+    marginBottom: 10,
+    paddingHorizontal: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: "#263244",
+    borderRadius: 6,
+    backgroundColor: "#172033"
+  },
+  solutionOptionChecked: {
+    borderColor: "#15aabf",
+    backgroundColor: "#12313d"
+  },
+  solutionOptionBox: {
+    width: 17,
+    height: 17,
+    borderWidth: 1,
+    borderColor: "#64748b",
+    borderRadius: 4,
+    color: "#7dd3fc",
+    textAlign: "center",
+    lineHeight: 15,
+    fontSize: 12,
+    fontWeight: "900"
+  },
+  solutionOptionBoxChecked: {
+    borderColor: "#15aabf",
+    backgroundColor: "#0f3a46"
+  },
+  solutionOptionText: {
+    color: "#e8edf3",
+    fontSize: 13,
+    fontWeight: "800"
   },
   solution: {
     minHeight: 156,
