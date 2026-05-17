@@ -194,7 +194,7 @@ async function generateWithOpenAI(
     body: JSON.stringify({
       model,
       instructions:
-        "You write complete coding interview study cards. Return only valid JSON matching the schema. Always fill prompt, examples, constraints, approach, and solution with useful original content. Never return placeholders like 'not provided', 'no examples', or 'open LeetCode'. The solution must be Python 3 in LeetCode class Solution style. Include concise, useful comments in the code for key algorithm steps, but do not comment every line. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
+        "You write complete coding interview study cards. Return only valid JSON matching the schema. Always fill prompt, examples, constraints, approach, and solution with useful original content. Never return placeholders like 'not provided', 'no examples', or 'open LeetCode'. The solution must be Python 3 in LeetCode class Solution style. Preserve type annotations only in the LeetCode method signature if they are present in the starter code. Do not add type annotations to helper functions, local variables, temporary variables, nested functions, or return types beyond the main provided signature. Include concise, useful comments in the code for key algorithm steps, but do not comment every line. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
       input: [
         {
           role: "user",
@@ -265,8 +265,36 @@ ${question.constraints || "Not provided"}`
     examples: parsed.examples,
     constraints: parsed.constraints,
     approach: parsed.approach,
-    solution: parsed.solution
+    solution: stripExtraTypeAnnotations(parsed.solution)
   };
+}
+
+function stripExtraTypeAnnotations(code: string) {
+  const lines = code.split("\n");
+  let keptPrimarySignature = false;
+
+  return lines
+    .map((line) => {
+      if (/^\s*def\s+/.test(line)) {
+        if (!keptPrimarySignature && line.includes("self")) {
+          keptPrimarySignature = true;
+          return line;
+        }
+
+        return line
+          .replace(/\s*->\s*[^:]+:/, ":")
+          .replace(/\((.*)\)/, (_match, args: string) => {
+            const cleaned = args
+              .split(",")
+              .map((arg) => arg.replace(/:\s*[^=,]+(?=\s*(=|$))/, ""))
+              .join(",");
+            return `(${cleaned})`;
+          });
+      }
+
+      return line.replace(/^(\s*[A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=]+=/, "$1 =");
+    })
+    .join("\n");
 }
 
 function extractOutputText(payload: {
