@@ -225,12 +225,31 @@ export function LeetFlash() {
     countedViewKeys.current.add(viewKey);
 
     void recordProblemView(sessionUserId, activeQuestionId).then((stats) => {
-      const nextSeen = stats.previousCount > 0;
+      const storedCount = readProblemViewCount(activeQuestionId);
+      const nextSeen = stats.previousCount > 0 || storedCount > 1;
+      const nextCount = Math.max(stats.count, storedCount);
       setSeen(nextSeen);
-      setViewCounts((current) => ({ ...current, [activeQuestionId]: stats.count }));
+      setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
       writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
     });
   }, [activeQuestionId, activeViewToken, sessionUserId]);
+
+  useEffect(() => {
+    if (!activeQuestionId) return;
+
+    const viewKey = `local:${activeQuestionId}:${activeViewToken}`;
+    if (countedViewKeys.current.has(viewKey)) return;
+    countedViewKeys.current.add(viewKey);
+
+    const previousCount = readProblemViewCount(activeQuestionId);
+    const nextCount = previousCount + 1;
+    const nextSeen = previousCount > 0;
+
+    writeProblemViewCount(activeQuestionId, nextCount);
+    writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
+    setSeen(nextSeen);
+    setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
+  }, [activeQuestionId, activeViewToken]);
 
   useEffect(() => {
     cardIds.slice(index, index + 3).forEach((id) => {
@@ -342,22 +361,26 @@ export function LeetFlash() {
     setSeen(nextSeen);
     writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
 
+    if (nextSeen) {
+      const nextCount = readProblemViewCount(activeQuestionId) + 1;
+      writeProblemViewCount(activeQuestionId, nextCount);
+      setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
+    } else {
+      writeProblemViewCount(activeQuestionId, 0);
+      setViewCounts((current) => ({ ...current, [activeQuestionId]: 0 }));
+    }
+
     if (sessionUserId) {
       if (nextSeen) {
         void recordProblemView(sessionUserId, activeQuestionId, "manual").then(
           (stats) => {
             setViewCounts((current) => ({
               ...current,
-              [activeQuestionId]: stats.count
+              [activeQuestionId]: Math.max(stats.count, readProblemViewCount(activeQuestionId))
             }));
           }
         );
-        setViewCounts((current) => ({
-          ...current,
-          [activeQuestionId]: (current[activeQuestionId] ?? 0) + 1
-        }));
       } else {
-        setViewCounts((current) => ({ ...current, [activeQuestionId]: 0 }));
         void supabase
           .from("user_problem_views")
           .delete()
@@ -895,6 +918,18 @@ function withGeneratedCard(problem: LeetProblem, solution?: QuestionSolution) {
     starterCode: solution.starter_code,
     hasSolution: true
   };
+}
+
+function problemViewCountKey(questionId: number) {
+  return `leetflash:viewCount:${questionId}`;
+}
+
+function readProblemViewCount(questionId: number) {
+  return Number(readStoredValue(problemViewCountKey(questionId)) ?? 0);
+}
+
+function writeProblemViewCount(questionId: number, count: number) {
+  writeStoredValue(problemViewCountKey(questionId), String(Math.max(0, count)));
 }
 
 async function recordProblemView(
