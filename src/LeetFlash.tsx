@@ -33,6 +33,8 @@ const webScrollStyle =
   Platform.OS === "web"
     ? ({ overflowY: "auto", overflowX: "hidden" } as object)
     : null;
+const codeNoWrapStyle =
+  Platform.OS === "web" ? ({ whiteSpace: "pre", flexShrink: 0 } as object) : null;
 const lastQuestionKey = "leetflash:lastQuestionId";
 const randomModeKey = "leetflash:randomMode";
 const foldStateKey = "leetflash:foldState";
@@ -68,6 +70,7 @@ export function LeetFlash() {
   const listRef = useRef<ScrollView>(null);
   const requestedSolutionIds = useRef(new Set<number>());
   const loadedSolutionIds = useRef(new Set<number>());
+  const pendingScrollQuestionId = useRef<number | null>(null);
   const initialQuestionId =
     readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
   const initialCursor = Math.max(initialQuestionId - 1, 0);
@@ -119,9 +122,9 @@ export function LeetFlash() {
     });
   }, [queriedProblems]);
 
-  const problems = cardIds.map((id) => problemMap[id]).filter(Boolean);
-
-  const activeProblem = problems[index];
+  const problems = cardIds.map((id) => problemMap[id] ?? makeLoadingProblem(id));
+  const activeQuestionId = cardIds[index] ?? initialQuestionId;
+  const activeProblem = problemMap[activeQuestionId];
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener("change", ({ window }) => {
@@ -132,10 +135,38 @@ export function LeetFlash() {
   }, []);
 
   useEffect(() => {
-    if (problems.length > 0 && problems.length - index <= 2) {
+    if (cardIds.length > 0 && cardIds.length - index <= 2) {
       appendNextCard();
     }
-  }, [index, problems.length, randomMode]);
+  }, [index, cardIds.length, randomMode]);
+
+  useEffect(() => {
+    const pendingId = pendingScrollQuestionId.current;
+    if (!pendingId) return;
+
+    const nextIndex = cardIds.findIndex((id) => id === pendingId);
+    if (nextIndex < 0) return;
+
+    pendingScrollQuestionId.current = null;
+    setActiveIndex(nextIndex);
+    requestAnimationFrame(() => {
+      listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
+    });
+  }, [cardIds, width]);
+
+  useEffect(() => {
+    cardIds.slice(index, index + 3).forEach((id) => {
+      if (!problemMap[id]) {
+        void fetchProblemPage(id - 1).then((page) => {
+          const problem = page.items.find((item) => item.id === id) ?? page.items[0];
+          setProblemMap((current) => ({ ...current, [id]: problem }));
+          queryClient.setQueryData(queryKey, (existing: typeof query.data) =>
+            appendQueryPage(existing, id - 1, { ...page, items: [problem] })
+          );
+        });
+      }
+    });
+  }, [cardIds, index, problemMap, queryClient]);
 
   useEffect(() => {
     void queryClient.prefetchInfiniteQuery({
@@ -172,43 +203,43 @@ export function LeetFlash() {
   }, []);
 
   useEffect(() => {
-    if (!activeProblem) return;
-
     const now = Date.now();
     setPageStartedAt(now);
     setElapsedSeconds(0);
-    writeStoredValue(lastQuestionKey, String(activeProblem.id));
-    writeQuestionUrl(activeProblem.id);
-    setJumpInput(String(activeProblem.id));
+    writeStoredValue(lastQuestionKey, String(activeQuestionId));
+    writeQuestionUrl(activeQuestionId);
+    setJumpInput(String(activeQuestionId));
+    setSeen(true);
+    writeStoredValue(`leetflash:seen:${activeQuestionId}`, "true");
 
     if (sessionUserId) {
       void supabase.from("user_settings").upsert({
         user_id: sessionUserId,
-        last_question_id: activeProblem.id,
+        last_question_id: activeQuestionId,
         random_mode: randomMode
       });
 
-      void supabase
-        .from("user_question_progress")
-        .select("seen")
-        .eq("user_id", sessionUserId)
-        .eq("question_id", activeProblem.id)
-        .maybeSingle()
-        .then((result) => setSeen(Boolean(result.data?.seen)));
-    } else {
-      setSeen(readStoredValue(`leetflash:seen:${activeProblem.id}`) === "true");
+      void supabase.from("user_question_progress").upsert({
+        user_id: sessionUserId,
+        question_id: activeQuestionId,
+        seen: true,
+        last_seen_at: new Date().toISOString()
+      });
     }
 
-    void loadOrGenerateSolution(activeProblem);
-  }, [activeProblem?.id, randomMode, sessionUserId]);
+    if (activeProblem) {
+      void loadOrGenerateSolution(activeProblem);
+    }
+  }, [activeQuestionId, activeProblem?.id, randomMode, sessionUserId]);
 
   useEffect(() => {
-    problems.slice(index, index + 3).forEach((problem) => {
-      if (isPlaceholderProblem(problem)) {
+    cardIds.slice(index, index + 3).forEach((id) => {
+      const problem = problemMap[id];
+      if (problem && isPlaceholderProblem(problem)) {
         void loadOrGenerateSolution(problem);
       }
     });
-  }, [index, problems, solutionMap]);
+  }, [cardIds, index, problemMap, solutionMap]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -219,15 +250,15 @@ export function LeetFlash() {
   }, [pageStartedAt]);
 
   const goTo = (nextIndex: number) => {
-    if (problems.length === 0) return;
+    if (cardIds.length === 0) return;
 
-    const clamped = Math.max(0, Math.min(nextIndex, problems.length - 1));
+    const clamped = Math.max(0, Math.min(nextIndex, cardIds.length - 1));
     setActiveIndex(clamped);
     listRef.current?.scrollTo({ x: clamped * width, animated: true });
   };
 
   const setActiveIndex = (nextIndex: number) => {
-    const clamped = Math.max(0, Math.min(nextIndex, Math.max(problems.length - 1, 0)));
+    const clamped = Math.max(0, Math.min(nextIndex, Math.max(cardIds.length - 1, 0)));
     setIndex((current) => {
       if (current === clamped) return current;
       setPageStartedAt(Date.now());
@@ -243,7 +274,7 @@ export function LeetFlash() {
 
   const goNext = () => {
     if (randomMode) {
-      void goToQuestionNumber(randomQuestionId(activeProblem?.id));
+      void goToQuestionNumber(randomQuestionId(activeQuestionId));
       return;
     }
 
@@ -252,7 +283,7 @@ export function LeetFlash() {
 
   const goToQuestionNumber = async (questionId: number) => {
     const normalized = Math.max(1, Math.floor(questionId));
-    const existingIndex = problems.findIndex((problem) => problem.id === normalized);
+    const existingIndex = cardIds.findIndex((id) => id === normalized);
 
     if (existingIndex >= 0) {
       goTo(existingIndex);
@@ -263,14 +294,12 @@ export function LeetFlash() {
     queryClient.setQueryData(queryKey, (current: typeof query.data) => {
       return appendQueryPage(current, normalized - 1, page);
     });
-    setProblemMap((current) => ({ ...current, [normalized]: page.items[0] }));
-    setCardIds((current) => [...current, normalized]);
-
-    setTimeout(() => {
-      const nextIndex = cardIds.length;
-      setActiveIndex(nextIndex);
-      listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
-    }, 50);
+    const problem = page.items.find((item) => item.id === normalized) ?? page.items[0];
+    setProblemMap((current) => ({ ...current, [normalized]: problem }));
+    pendingScrollQuestionId.current = normalized;
+    setCardIds((current) =>
+      current.includes(normalized) ? current : [...current, normalized]
+    );
   };
 
   const appendNextCard = () => {
@@ -293,15 +322,15 @@ export function LeetFlash() {
   };
 
   const updateSeen = (nextSeen: boolean) => {
-    if (!activeProblem) return;
+    if (!activeQuestionId) return;
 
     setSeen(nextSeen);
-    writeStoredValue(`leetflash:seen:${activeProblem.id}`, String(nextSeen));
+    writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
 
     if (sessionUserId) {
       void supabase.from("user_question_progress").upsert({
         user_id: sessionUserId,
-        question_id: activeProblem.id,
+        question_id: activeQuestionId,
         seen: nextSeen,
         last_seen_at: new Date().toISOString()
       });
@@ -318,7 +347,7 @@ export function LeetFlash() {
 
   const toggleRandomMode = () => {
     const nextRandomMode = !randomMode;
-    const currentId = activeProblem?.id ?? initialQuestionId;
+    const currentId = activeQuestionId;
     setRandomMode(nextRandomMode);
     writeStoredValue(randomModeKey, String(nextRandomMode));
     setCardIds([
@@ -426,9 +455,9 @@ export function LeetFlash() {
           >
             <View style={styles.problemLinkContent}>
               <Text style={styles.problemNumber}>
-                {activeProblem ? `#${activeProblem.id}` : "LeetFlash"}
+                {activeQuestionId ? `#${activeQuestionId}` : "LeetFlash"}
               </Text>
-              {activeProblem ? <Text style={styles.externalIcon}>↗</Text> : null}
+              {activeQuestionId ? <Text style={styles.externalIcon}>↗</Text> : null}
             </View>
           </Pressable>
 
@@ -533,7 +562,7 @@ export function LeetFlash() {
                   event.nativeEvent.contentOffset.x,
                   event.nativeEvent.layoutMeasurement.width
                 );
-                if (problems.length - nextIndex <= 2) {
+                if (cardIds.length - nextIndex <= 2) {
                   appendNextCard();
                 }
               }}
@@ -681,13 +710,19 @@ function ProblemCard({
           open={foldState.solution}
           onToggle={() => onToggleFold("solution")}
         >
-          <View style={styles.solution}>
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.solution}
+            contentContainerStyle={styles.solutionContent}
+          >
             {isGeneratingSolution ? (
               <SolutionSkeleton />
             ) : (
               <SyntaxHighlightedCode code={problem.solution} />
             )}
-          </View>
+          </ScrollView>
         </FoldableSection>
       </View>
 
@@ -765,6 +800,22 @@ function appendQueryPage(
     ...current,
     pageParams: [...current.pageParams, pageParam],
     pages: [...current.pages, page]
+  };
+}
+
+function makeLoadingProblem(id: number): LeetProblem {
+  return {
+    id,
+    title: `Problem #${id}`,
+    difficulty: "Medium",
+    slug: `problem-${id}`,
+    prompt: "",
+    examples: "",
+    constraints: "",
+    bullets: [],
+    solution: "",
+    starterCode: "class Solution:\n    def solve(self):\n        ",
+    source: "leetcode"
   };
 }
 
@@ -934,7 +985,7 @@ function SyntaxHighlightedCode({ code }: { code: string }) {
   const spans = useMemo(() => highlightPython(code), [code]);
 
   return (
-    <Text selectable style={styles.code}>
+    <Text selectable style={[styles.code, codeNoWrapStyle]}>
       {spans.map((span, index) => (
         <Text key={`${span.text}-${index}`} style={span.style}>
           {span.text}
@@ -1310,11 +1361,14 @@ const styles = StyleSheet.create({
   },
   solution: {
     minHeight: 156,
-    padding: 14,
     borderWidth: 1,
     borderColor: "#263244",
     borderRadius: 8,
     backgroundColor: "#111827"
+  },
+  solutionContent: {
+    padding: 14,
+    minWidth: "100%"
   },
   solutionHidden: {
     alignItems: "center",
