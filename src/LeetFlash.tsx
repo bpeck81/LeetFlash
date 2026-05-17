@@ -515,6 +515,7 @@ export function LeetFlash() {
                 )}
                 height={listHeight}
                 isGeneratingSolution={Boolean(generatingIds[activeQuestionId])}
+                questionId={activeQuestionId}
                 viewCount={viewCounts[activeQuestionId] ?? 0}
                 foldState={foldState}
                 onToggleFold={updateFoldState}
@@ -625,6 +626,7 @@ type ProblemCardProps = {
   problem: LeetProblem;
   height: number;
   isGeneratingSolution: boolean;
+  questionId: number;
   viewCount: number;
   foldState: FoldState;
   onToggleFold: (key: keyof FoldState) => void;
@@ -636,12 +638,14 @@ function ProblemCard({
   problem,
   height,
   isGeneratingSolution,
+  questionId,
   viewCount,
   foldState,
   onToggleFold,
   hideSolutionComments,
   onToggleHideSolutionComments
 }: ProblemCardProps) {
+  const cardScrollRef = useRef<ScrollView>(null);
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
   const renderedSolution = useMemo(
     () =>
@@ -654,8 +658,13 @@ function ProblemCard({
   const constraints = problem.constraints ?? promptParts.constraints;
   const statement = needsGeneratedPrompt ? "Getting problem with AI." : promptParts.statement;
 
+  useEffect(() => {
+    cardScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [questionId]);
+
   return (
     <ScrollView
+      ref={cardScrollRef}
       style={[styles.card, { height, maxHeight: height }, webScrollStyle]}
       contentContainerStyle={styles.cardContent}
       keyboardShouldPersistTaps="handled"
