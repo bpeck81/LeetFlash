@@ -451,6 +451,76 @@ export function LeetFlash() {
           setWidth(event.nativeEvent.layout.width);
         }}
       >
+        <View
+          style={styles.listContainer}
+          onLayout={(event) => {
+            setListHeight(Math.max(event.nativeEvent.layout.height, 320));
+          }}
+        >
+          {query.isLoading ? (
+            <View style={styles.loader}>
+              <ActivityIndicator color="#111827" />
+            </View>
+          ) : (
+            <ScrollView
+              ref={listRef}
+              horizontal
+              scrollEnabled={false}
+              pagingEnabled
+              snapToInterval={width}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              disableIntervalMomentum
+              bounces={false}
+              showsHorizontalScrollIndicator={false}
+              scrollEventThrottle={16}
+              onMomentumScrollEnd={(event) => {
+                const nextIndex = Math.round(
+                  event.nativeEvent.contentOffset.x /
+                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
+                );
+                syncIndexFromOffset(
+                  event.nativeEvent.contentOffset.x,
+                  event.nativeEvent.layoutMeasurement.width
+                );
+                if (cardIds.length - nextIndex <= 2) {
+                  appendNextCard();
+                }
+              }}
+              onScrollEndDrag={(event) => {
+                const nextIndex = Math.round(
+                  event.nativeEvent.contentOffset.x /
+                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
+                );
+                syncIndexFromOffset(
+                  event.nativeEvent.contentOffset.x,
+                  event.nativeEvent.layoutMeasurement.width
+                );
+                listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
+              }}
+            >
+              {problems.map((item, itemIndex) => {
+                const renderedItem = withGeneratedCard(item, solutionMap[item.id]);
+
+                return (
+                  <View
+                    key={`${item.id}-${itemIndex}`}
+                    style={[styles.itemFrame, { width, height: listHeight }]}
+                  >
+                    <ProblemCard
+                      problem={renderedItem}
+                      height={listHeight}
+                      isGeneratingSolution={Boolean(generatingIds[item.id])}
+                      foldState={foldState}
+                      onToggleFold={updateFoldState}
+                    />
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
+
         <View style={styles.topBar}>
           <Pressable
             accessibilityLabel="Previous problem"
@@ -541,76 +611,6 @@ export function LeetFlash() {
               <Text style={styles.jumpButtonText}>Go</Text>
             </Pressable>
           </View>
-        </View>
-
-        <View
-          style={styles.listContainer}
-          onLayout={(event) => {
-            setListHeight(Math.max(event.nativeEvent.layout.height, 320));
-          }}
-        >
-          {query.isLoading ? (
-            <View style={styles.loader}>
-              <ActivityIndicator color="#111827" />
-            </View>
-          ) : (
-            <ScrollView
-              ref={listRef}
-              horizontal
-              scrollEnabled={false}
-              pagingEnabled
-              snapToInterval={width}
-              snapToAlignment="start"
-              decelerationRate="fast"
-              disableIntervalMomentum
-              bounces={false}
-              showsHorizontalScrollIndicator={false}
-              scrollEventThrottle={16}
-              onMomentumScrollEnd={(event) => {
-                const nextIndex = Math.round(
-                  event.nativeEvent.contentOffset.x /
-                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
-                );
-                syncIndexFromOffset(
-                  event.nativeEvent.contentOffset.x,
-                  event.nativeEvent.layoutMeasurement.width
-                );
-                if (cardIds.length - nextIndex <= 2) {
-                  appendNextCard();
-                }
-              }}
-              onScrollEndDrag={(event) => {
-                const nextIndex = Math.round(
-                  event.nativeEvent.contentOffset.x /
-                    Math.max(event.nativeEvent.layoutMeasurement.width, 1)
-                );
-                syncIndexFromOffset(
-                  event.nativeEvent.contentOffset.x,
-                  event.nativeEvent.layoutMeasurement.width
-                );
-                listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
-              }}
-            >
-              {problems.map((item, itemIndex) => {
-                const renderedItem = withGeneratedCard(item, solutionMap[item.id]);
-
-                return (
-                  <View
-                    key={`${item.id}-${itemIndex}`}
-                    style={[styles.itemFrame, { width, height: listHeight }]}
-                  >
-                    <ProblemCard
-                      problem={renderedItem}
-                      height={listHeight}
-                      isGeneratingSolution={Boolean(generatingIds[item.id])}
-                      foldState={foldState}
-                      onToggleFold={updateFoldState}
-                    />
-                  </View>
-                );
-              })}
-            </ScrollView>
-          )}
         </View>
       </View>
     </SafeAreaView>
@@ -1077,6 +1077,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#d8dee9",
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#d8dee9"
   },
