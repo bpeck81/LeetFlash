@@ -17,6 +17,13 @@ import {
 } from "react-native";
 import { fetchProblemPage } from "./lib/problemFeed";
 import type { LeetProblem } from "./data/problems";
+import {
+  readQuestionNumberFromUrl,
+  readStoredValue,
+  writeQuestionUrl,
+  writeStoredValue
+} from "./lib/persistence";
+import { getAnonymousSession, hasSupabaseConfig, supabase } from "./lib/supabase";
 
 const queryKey = ["leet-problems"];
 const leetcodeUrl = (slug: string) => `https://leetcode.com/problems/${slug}/`;
@@ -26,21 +33,57 @@ const webScrollStyle =
   Platform.OS === "web"
     ? ({ overflowY: "auto", overflowX: "hidden" } as object)
     : null;
+const lastQuestionKey = "leetflash:lastQuestionId";
+const randomModeKey = "leetflash:randomMode";
+const foldStateKey = "leetflash:foldState";
+
+type FoldState = {
+  examples: boolean;
+  constraints: boolean;
+  approach: boolean;
+  solution: boolean;
+};
+
+const defaultFoldState: FoldState = {
+  examples: false,
+  constraints: false,
+  approach: false,
+  solution: true
+};
+
+type QuestionSolution = {
+  question_id: number;
+  approach: string[];
+  solution: string;
+  starter_code: string;
+};
 
 export function LeetFlash() {
   const queryClient = useQueryClient();
   const listRef = useRef<FlashList<LeetProblem>>(null);
+  const initialQuestionId =
+    readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
+  const initialCursor = Math.max(initialQuestionId - 1, 0);
   const [width, setWidth] = useState(Dimensions.get("window").width);
   const [listHeight, setListHeight] = useState(
     Math.max(Dimensions.get("window").height - 56, 320)
   );
   const [index, setIndex] = useState(0);
   const [showSolution, setShowSolution] = useState(true);
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [seen, setSeen] = useState(false);
+  const [randomMode, setRandomMode] = useState(
+    readStoredValue(randomModeKey) === "true"
+  );
+  const [jumpInput, setJumpInput] = useState(String(initialQuestionId));
+  const [solutionMap, setSolutionMap] = useState<Record<number, QuestionSolution>>({});
+  const [generatingIds, setGeneratingIds] = useState<Record<number, boolean>>({});
+  const [foldState, setFoldState] = useState<FoldState>(() => readFoldState());
 
   const query = useInfiniteQuery({
     queryKey,
     queryFn: ({ pageParam }) => fetchProblemPage(pageParam),
-    initialPageParam: 0,
+    initialPageParam: initialCursor,
     getNextPageParam: (lastPage: Awaited<ReturnType<typeof fetchProblemPage>>) =>
       lastPage.nextCursor ?? undefined
   });
@@ -51,6 +94,17 @@ export function LeetFlash() {
   );
 
   const activeProblem = problems[index];
+  const activeSolution = activeProblem ? solutionMap[activeProblem.id] : undefined;
+  const renderedProblem =
+    activeProblem && activeSolution
+      ? {
+          ...activeProblem,
+          bullets: activeSolution.approach,
+          solution: activeSolution.solution,
+          starterCode: activeSolution.starter_code,
+          hasSolution: true
+        }
+      : activeProblem;
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener("change", ({ window }) => {
@@ -76,12 +130,187 @@ export function LeetFlash() {
     });
   }, [queryClient]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    void getAnonymousSession().then(async (session) => {
+      if (!mounted || !session?.user.id) return;
+
+      setSessionUserId(session.user.id);
+      const settings = await supabase
+        .from("user_settings")
+        .select("last_question_id, random_mode")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+
+      if (settings.data?.random_mode !== undefined) {
+        setRandomMode(settings.data.random_mode);
+        writeStoredValue(randomModeKey, String(settings.data.random_mode));
+      }
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeProblem) return;
+
+    writeStoredValue(lastQuestionKey, String(activeProblem.id));
+    writeQuestionUrl(activeProblem.id);
+    setJumpInput(String(activeProblem.id));
+
+    if (sessionUserId) {
+      void supabase.from("user_settings").upsert({
+        user_id: sessionUserId,
+        last_question_id: activeProblem.id,
+        random_mode: randomMode
+      });
+
+      void supabase
+        .from("user_question_progress")
+        .select("seen")
+        .eq("user_id", sessionUserId)
+        .eq("question_id", activeProblem.id)
+        .maybeSingle()
+        .then((result) => setSeen(Boolean(result.data?.seen)));
+    } else {
+      setSeen(readStoredValue(`leetflash:seen:${activeProblem.id}`) === "true");
+    }
+
+    void loadOrGenerateSolution(activeProblem);
+  }, [activeProblem?.id, randomMode, sessionUserId]);
+
   const goTo = (nextIndex: number) => {
     if (problems.length === 0) return;
 
     const clamped = Math.max(0, Math.min(nextIndex, problems.length - 1));
     setIndex(clamped);
     listRef.current?.scrollToIndex({ index: clamped, animated: true });
+  };
+
+  const goNext = () => {
+    if (randomMode) {
+      void goToQuestionNumber(randomQuestionId(activeProblem?.id));
+      return;
+    }
+
+    goTo(index + 1);
+  };
+
+  const goToQuestionNumber = async (questionId: number) => {
+    const normalized = Math.max(1, Math.floor(questionId));
+    const existingIndex = problems.findIndex((problem) => problem.id === normalized);
+
+    if (existingIndex >= 0) {
+      goTo(existingIndex);
+      return;
+    }
+
+    const page = await fetchProblemPage(normalized - 1);
+    queryClient.setQueryData(queryKey, (current: typeof query.data) => {
+      if (!current) {
+        return { pageParams: [normalized - 1], pages: [page] };
+      }
+
+      return {
+        ...current,
+        pageParams: [...current.pageParams, normalized - 1],
+        pages: [...current.pages, page]
+      };
+    });
+
+    setTimeout(() => {
+      const nextIndex = problems.length;
+      setIndex(nextIndex);
+      listRef.current?.scrollToIndex({ index: nextIndex, animated: true });
+    }, 50);
+  };
+
+  const updateSeen = (nextSeen: boolean) => {
+    if (!activeProblem) return;
+
+    setSeen(nextSeen);
+    writeStoredValue(`leetflash:seen:${activeProblem.id}`, String(nextSeen));
+
+    if (sessionUserId) {
+      void supabase.from("user_question_progress").upsert({
+        user_id: sessionUserId,
+        question_id: activeProblem.id,
+        seen: nextSeen,
+        last_seen_at: new Date().toISOString()
+      });
+    }
+  };
+
+  const updateFoldState = (key: keyof FoldState) => {
+    setFoldState((current) => {
+      const next = { ...current, [key]: !current[key] };
+      writeStoredValue(foldStateKey, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const toggleRandomMode = () => {
+    const nextRandomMode = !randomMode;
+    setRandomMode(nextRandomMode);
+    writeStoredValue(randomModeKey, String(nextRandomMode));
+
+    if (sessionUserId) {
+      void supabase.from("user_settings").upsert({
+        user_id: sessionUserId,
+        last_question_id: activeProblem?.id ?? null,
+        random_mode: nextRandomMode
+      });
+    }
+  };
+
+  const loadOrGenerateSolution = async (problem: LeetProblem) => {
+    if (solutionMap[problem.id] || generatingIds[problem.id] || !hasSupabaseConfig) {
+      return;
+    }
+
+    const existing = await supabase
+      .from("question_solutions")
+      .select("question_id, approach, solution, starter_code")
+      .eq("question_id", problem.id)
+      .maybeSingle();
+
+    if (existing.data?.solution && existing.data.approach?.length) {
+      setSolutionMap((current) => ({
+        ...current,
+        [problem.id]: existing.data as QuestionSolution
+      }));
+      return;
+    }
+
+    if (problem.hasSolution && problem.solution && problem.bullets.length) {
+      return;
+    }
+
+    setGeneratingIds((current) => ({ ...current, [problem.id]: true }));
+    const generated = await supabase.functions.invoke("generate-solution", {
+      body: {
+        question: {
+          id: problem.id,
+          slug: problem.slug,
+          title: problem.title,
+          difficulty: problem.difficulty,
+          prompt: problem.prompt,
+          starterCode: problem.starterCode
+        }
+      }
+    });
+
+    if (generated.data?.solution) {
+      setSolutionMap((current) => ({
+        ...current,
+        [problem.id]: generated.data.solution as QuestionSolution
+      }));
+    }
+
+    setGeneratingIds((current) => ({ ...current, [problem.id]: false }));
   };
 
   const openProblem = () => {
@@ -122,10 +351,67 @@ export function LeetFlash() {
           <Pressable
             accessibilityLabel="Next problem"
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={() => goTo(index + 1)}
+            onPress={goNext}
           >
             <Text style={styles.chevron}>›</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.controlsBar}>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: seen }}
+            style={({ pressed }) => [
+              styles.seenControl,
+              seen && styles.seenControlChecked,
+              pressed && styles.pressed
+            ]}
+            onPress={() => updateSeen(!seen)}
+          >
+            <Text style={[styles.checkbox, seen && styles.checkboxChecked]}>
+              {seen ? "✓" : ""}
+            </Text>
+            <Text style={styles.controlText}>Seen</Text>
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: randomMode }}
+            style={({ pressed }) => [
+              styles.modeControl,
+              randomMode && styles.modeControlActive,
+              pressed && styles.pressed
+            ]}
+            onPress={toggleRandomMode}
+          >
+            <Text
+              style={[styles.controlText, randomMode && styles.modeControlTextActive]}
+            >
+              Random
+            </Text>
+          </Pressable>
+
+          <View style={styles.jumpControl}>
+            <TextInput
+              value={jumpInput}
+              onChangeText={setJumpInput}
+              keyboardType="number-pad"
+              placeholder="#"
+              placeholderTextColor="#94a3b8"
+              style={styles.jumpInput}
+              onSubmitEditing={() => {
+                void goToQuestionNumber(Number(jumpInput));
+              }}
+            />
+            <Pressable
+              style={({ pressed }) => [styles.jumpButton, pressed && styles.pressed]}
+              onPress={() => {
+                void goToQuestionNumber(Number(jumpInput));
+              }}
+            >
+              <Text style={styles.jumpButtonText}>Go</Text>
+            </Pressable>
+          </View>
         </View>
 
         <View
@@ -161,8 +447,11 @@ export function LeetFlash() {
               renderItem={({ item }) => (
                 <View style={[styles.itemFrame, { width, height: listHeight }]}>
                   <ProblemCard
-                    problem={item}
+                    problem={item.id === renderedProblem?.id ? renderedProblem : item}
                     height={listHeight}
+                    isGeneratingSolution={Boolean(generatingIds[item.id])}
+                    foldState={foldState}
+                    onToggleFold={updateFoldState}
                     showSolution={showSolution}
                     onToggleSolution={() => setShowSolution((value) => !value)}
                   />
@@ -179,6 +468,9 @@ export function LeetFlash() {
 type ProblemCardProps = {
   problem: LeetProblem;
   height: number;
+  isGeneratingSolution: boolean;
+  foldState: FoldState;
+  onToggleFold: (key: keyof FoldState) => void;
   showSolution: boolean;
   onToggleSolution: () => void;
 };
@@ -186,11 +478,12 @@ type ProblemCardProps = {
 function ProblemCard({
   problem,
   height,
+  isGeneratingSolution,
+  foldState,
+  onToggleFold,
   showSolution,
   onToggleSolution
 }: ProblemCardProps) {
-  const [examplesOpen, setExamplesOpen] = useState(false);
-  const [constraintsOpen, setConstraintsOpen] = useState(false);
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
 
   return (
@@ -215,8 +508,8 @@ function ProblemCard({
         {promptParts.examples ? (
           <FoldableSection
             title="Examples"
-            open={examplesOpen}
-            onToggle={() => setExamplesOpen((value) => !value)}
+            open={foldState.examples}
+            onToggle={() => onToggleFold("examples")}
           >
             <Text style={styles.promptDetail}>{promptParts.examples}</Text>
           </FoldableSection>
@@ -225,8 +518,8 @@ function ProblemCard({
         {promptParts.constraints ? (
           <FoldableSection
             title="Constraints"
-            open={constraintsOpen}
-            onToggle={() => setConstraintsOpen((value) => !value)}
+            open={foldState.constraints}
+            onToggle={() => onToggleFold("constraints")}
           >
             <Text style={styles.promptDetail}>{promptParts.constraints}</Text>
           </FoldableSection>
@@ -238,34 +531,46 @@ function ProblemCard({
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Approach</Text>
-        <View style={styles.bullets}>
-          {problem.bullets.map((bullet) => (
-            <Text key={bullet} style={styles.bullet}>
-              • {bullet}
-            </Text>
-          ))}
-        </View>
+        <FoldableSection
+          title="Approach"
+          open={foldState.approach}
+          onToggle={() => onToggleFold("approach")}
+        >
+          <View style={styles.bullets}>
+            {problem.bullets.map((bullet) => (
+              <Text key={bullet} style={styles.bullet}>
+                • {bullet}
+              </Text>
+            ))}
+          </View>
+        </FoldableSection>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Solution</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={showSolution ? "Hide solution" : "Show solution"}
-          style={({ pressed }) => [
-            styles.solution,
-            !showSolution && styles.solutionHidden,
-            pressed && styles.pressed
-          ]}
-          onPress={onToggleSolution}
+        <FoldableSection
+          title="Solution"
+          open={foldState.solution}
+          onToggle={() => onToggleFold("solution")}
         >
-          {showSolution ? (
-            <SyntaxHighlightedCode code={problem.solution} />
-          ) : (
-            <Text style={styles.hiddenText}>Solution hidden</Text>
-          )}
-        </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={showSolution ? "Hide solution" : "Show solution"}
+            style={({ pressed }) => [
+              styles.solution,
+              !showSolution && styles.solutionHidden,
+              pressed && styles.pressed
+            ]}
+            onPress={onToggleSolution}
+          >
+            {isGeneratingSolution ? (
+              <SolutionSkeleton />
+            ) : showSolution ? (
+              <SyntaxHighlightedCode code={problem.solution} />
+            ) : (
+              <Text style={styles.hiddenText}>Solution hidden</Text>
+            )}
+          </Pressable>
+        </FoldableSection>
       </View>
 
       <View style={styles.section}>
@@ -287,6 +592,34 @@ function ProblemCard({
       <View style={styles.bottomSpacer} />
     </ScrollView>
   );
+}
+
+function SolutionSkeleton() {
+  return (
+    <View style={styles.skeletonBlock}>
+      <Text style={styles.skeletonTitle}>Getting solution with AI</Text>
+      <View style={styles.skeletonLine} />
+      <View style={[styles.skeletonLine, styles.skeletonLineWide]} />
+      <View style={styles.skeletonLine} />
+      <View style={[styles.skeletonLine, styles.skeletonLineShort]} />
+    </View>
+  );
+}
+
+function randomQuestionId(currentId?: number): number {
+  const next = Math.floor(Math.random() * 3934) + 1;
+  return next === currentId ? randomQuestionId(currentId) : next;
+}
+
+function readFoldState(): FoldState {
+  const raw = readStoredValue(foldStateKey);
+  if (!raw) return defaultFoldState;
+
+  try {
+    return { ...defaultFoldState, ...(JSON.parse(raw) as Partial<FoldState>) };
+  } catch {
+    return defaultFoldState;
+  }
 }
 
 type FoldableSectionProps = {
@@ -449,6 +782,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#d1d5db"
   },
+  controlsBar: {
+    minHeight: 52,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#d1d5db",
+    backgroundColor: "#f8fafc"
+  },
   iconButton: {
     width: 40,
     height: 40,
@@ -488,6 +832,92 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.64
+  },
+  seenControl: {
+    height: 36,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    backgroundColor: "#ffffff"
+  },
+  seenControlChecked: {
+    borderColor: "#0f766e",
+    backgroundColor: "#ecfdf5"
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderWidth: 1,
+    borderColor: "#94a3b8",
+    borderRadius: 4,
+    color: "#0f766e",
+    textAlign: "center",
+    lineHeight: 16,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  checkboxChecked: {
+    borderColor: "#0f766e",
+    backgroundColor: "#ccfbf1"
+  },
+  controlText: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  modeControl: {
+    height: 36,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    backgroundColor: "#ffffff"
+  },
+  modeControlActive: {
+    borderColor: "#2563eb",
+    backgroundColor: "#eff6ff"
+  },
+  modeControlTextActive: {
+    color: "#1d4ed8"
+  },
+  jumpControl: {
+    marginLeft: "auto",
+    height: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    backgroundColor: "#ffffff",
+    overflow: "hidden"
+  },
+  jumpInput: {
+    width: 70,
+    height: 36,
+    paddingHorizontal: 10,
+    color: "#111827",
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  jumpButton: {
+    height: 36,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderLeftWidth: 1,
+    borderLeftColor: "#cbd5e1",
+    backgroundColor: "#f1f5f9"
+  },
+  jumpButtonText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "900"
   },
   loader: {
     flex: 1,
@@ -622,6 +1052,27 @@ const styles = StyleSheet.create({
     color: "#4b5563",
     fontSize: 14,
     fontWeight: "700"
+  },
+  skeletonBlock: {
+    gap: 10
+  },
+  skeletonTitle: {
+    color: "#e5e7eb",
+    fontSize: 14,
+    fontWeight: "800",
+    marginBottom: 2
+  },
+  skeletonLine: {
+    height: 13,
+    width: "72%",
+    borderRadius: 4,
+    backgroundColor: "#334155"
+  },
+  skeletonLineWide: {
+    width: "92%"
+  },
+  skeletonLineShort: {
+    width: "48%"
   },
   code: {
     color: "#f8fafc",
