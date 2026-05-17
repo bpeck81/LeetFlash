@@ -70,6 +70,7 @@ export function LeetFlash() {
   const queryClient = useQueryClient();
   const requestedSolutionIds = useRef(new Set<number>());
   const loadedSolutionIds = useRef(new Set<number>());
+  const countedViewKeys = useRef(new Set<string>());
   const initialQuestionId =
     readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
   const initialCursor = Math.max(initialQuestionId - 1, 0);
@@ -80,6 +81,7 @@ export function LeetFlash() {
   const [index, setIndex] = useState(0);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const [seen, setSeen] = useState(false);
+  const [viewCounts, setViewCounts] = useState<Record<number, number>>({});
   const [randomMode, setRandomMode] = useState(
     readStoredValue(randomModeKey) === "true"
   );
@@ -92,6 +94,7 @@ export function LeetFlash() {
   );
   const [pageStartedAt, setPageStartedAt] = useState(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [activeViewToken, setActiveViewToken] = useState(0);
   const [cardIds, setCardIds] = useState<number[]>([
     initialQuestionId,
     nextQuestionId(initialQuestionId, readStoredValue(randomModeKey) === "true"),
@@ -191,7 +194,6 @@ export function LeetFlash() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
     const now = Date.now();
     setPageStartedAt(now);
     setElapsedSeconds(0);
@@ -208,29 +210,40 @@ export function LeetFlash() {
         last_question_id: activeQuestionId,
         random_mode: randomMode
       });
-
-      void supabase
-        .from("user_question_progress")
-        .select("seen")
-        .eq("user_id", sessionUserId)
-        .eq("question_id", activeQuestionId)
-        .maybeSingle()
-        .then((result) => {
-          if (cancelled) return;
-          const savedSeen = Boolean(result.data?.seen);
-          setSeen(savedSeen);
-          writeStoredValue(seenStorageKey, String(savedSeen));
-        });
     }
 
     if (activeProblem) {
       void loadOrGenerateSolution(activeProblem);
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [activeQuestionId, activeProblem?.id, randomMode, sessionUserId]);
+
+  useEffect(() => {
+    if (!activeQuestionId || !sessionUserId) return;
+
+    const viewKey = `${sessionUserId}:${activeQuestionId}:${activeViewToken}`;
+    if (countedViewKeys.current.has(viewKey)) return;
+    countedViewKeys.current.add(viewKey);
+
+    void supabase
+      .from("user_problem_views")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", sessionUserId)
+      .eq("question_id", activeQuestionId)
+      .then((result) => {
+        const previousCount = Number(result.count ?? 0);
+        const nextCount = previousCount + 1;
+        const nextSeen = previousCount > 0;
+        setSeen(nextSeen);
+        setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
+        writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
+
+        void supabase.from("user_problem_views").insert({
+          user_id: sessionUserId,
+          question_id: activeQuestionId,
+          source: "page"
+        });
+      });
+  }, [activeQuestionId, activeViewToken, sessionUserId]);
 
   useEffect(() => {
     cardIds.slice(index, index + 3).forEach((id) => {
@@ -266,6 +279,7 @@ export function LeetFlash() {
       if (current === nextIndex) return current;
       setPageStartedAt(Date.now());
       setElapsedSeconds(0);
+      setActiveViewToken((token) => token + 1);
       return nextIndex;
     });
   };
@@ -342,12 +356,22 @@ export function LeetFlash() {
     writeStoredValue(`leetflash:seen:${activeQuestionId}`, String(nextSeen));
 
     if (sessionUserId) {
-      void supabase.from("user_question_progress").upsert({
-        user_id: sessionUserId,
-        question_id: activeQuestionId,
-        seen: nextSeen,
-        last_seen_at: new Date().toISOString()
-      });
+      if (nextSeen) {
+        const nextCount = (viewCounts[activeQuestionId] ?? 0) + 1;
+        setViewCounts((current) => ({ ...current, [activeQuestionId]: nextCount }));
+        void supabase.from("user_problem_views").insert({
+          user_id: sessionUserId,
+          question_id: activeQuestionId,
+          source: "manual"
+        });
+      } else {
+        setViewCounts((current) => ({ ...current, [activeQuestionId]: 0 }));
+        void supabase
+          .from("user_problem_views")
+          .delete()
+          .eq("user_id", sessionUserId)
+          .eq("question_id", activeQuestionId);
+      }
     }
   };
 
@@ -476,6 +500,7 @@ export function LeetFlash() {
                 )}
                 height={listHeight}
                 isGeneratingSolution={Boolean(generatingIds[activeQuestionId])}
+                viewCount={viewCounts[activeQuestionId] ?? 0}
                 foldState={foldState}
                 onToggleFold={updateFoldState}
                 hideSolutionComments={hideSolutionComments}
@@ -585,6 +610,7 @@ type ProblemCardProps = {
   problem: LeetProblem;
   height: number;
   isGeneratingSolution: boolean;
+  viewCount: number;
   foldState: FoldState;
   onToggleFold: (key: keyof FoldState) => void;
   hideSolutionComments: boolean;
@@ -595,6 +621,7 @@ function ProblemCard({
   problem,
   height,
   isGeneratingSolution,
+  viewCount,
   foldState,
   onToggleFold,
   hideSolutionComments,
@@ -621,7 +648,15 @@ function ProblemCard({
       showsVerticalScrollIndicator
     >
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Problem</Text>
+        <View style={styles.problemHeaderRow}>
+          <Text style={styles.sectionLabel}>Problem</Text>
+          <View style={styles.viewCountPill} accessibilityLabel={`${viewCount} views`}>
+            <View style={styles.viewIcon}>
+              <View style={styles.viewIconPupil} />
+            </View>
+            <Text style={styles.viewCountText}>{viewCount}</Text>
+          </View>
+        </View>
         <View style={styles.titleRow}>
           <View style={styles.titleText}>
             <Text style={styles.title}>{problem.title}</Text>
@@ -1274,6 +1309,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     textTransform: "uppercase"
+  },
+  problemHeaderRow: {
+    minHeight: 26,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  viewCountPill: {
+    minHeight: 26,
+    paddingHorizontal: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#d8dee9",
+    borderRadius: 6,
+    backgroundColor: "#ffffff"
+  },
+  viewIcon: {
+    width: 16,
+    height: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#596579",
+    borderRadius: 999
+  },
+  viewIconPupil: {
+    width: 4,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#596579"
+  },
+  viewCountText: {
+    color: "#3b4656",
+    fontSize: 12,
+    fontWeight: "900"
   },
   titleRow: {
     flexDirection: "row",
