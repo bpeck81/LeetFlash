@@ -533,9 +533,10 @@ function ProblemCard({
 }: ProblemCardProps) {
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
   const needsGeneratedCard = isPlaceholderProblem(problem);
+  const needsGeneratedPrompt = isPlaceholderPrompt(problem.prompt);
   const examples = problem.examples ?? promptParts.examples;
   const constraints = problem.constraints ?? promptParts.constraints;
-  const statement = needsGeneratedCard ? "Getting problem with AI." : promptParts.statement;
+  const statement = needsGeneratedPrompt ? "Getting problem with AI." : promptParts.statement;
 
   return (
     <ScrollView
@@ -557,7 +558,7 @@ function ProblemCard({
         </View>
 
         <View style={styles.statementBox}>
-          {isGeneratingSolution && needsGeneratedCard ? (
+          {isGeneratingSolution && needsGeneratedPrompt ? (
             <MiniSkeleton label="Getting problem with AI" />
           ) : (
             <Text style={styles.prompt}>{statement}</Text>
@@ -721,11 +722,15 @@ function withGeneratedCard(problem: LeetProblem, solution?: QuestionSolution) {
 
 function isPlaceholderProblem(problem: LeetProblem) {
   return (
-    problem.prompt.includes("premium problem") ||
+    isPlaceholderPrompt(problem.prompt) ||
     !problem.solution.trim() ||
     !problem.examples ||
     !problem.constraints
   );
+}
+
+function isPlaceholderPrompt(prompt: string) {
+  return prompt.includes("premium problem") || !prompt.trim();
 }
 
 function difficultyStyle(difficulty: LeetProblem["difficulty"]) {
