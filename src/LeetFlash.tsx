@@ -203,14 +203,16 @@ export function LeetFlash() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const now = Date.now();
     setPageStartedAt(now);
     setElapsedSeconds(0);
     writeStoredValue(lastQuestionKey, String(activeQuestionId));
     writeQuestionUrl(activeQuestionId);
     setJumpInput(String(activeQuestionId));
-    setSeen(true);
-    writeStoredValue(`leetflash:seen:${activeQuestionId}`, "true");
+
+    const seenStorageKey = `leetflash:seen:${activeQuestionId}`;
+    setSeen(readStoredValue(seenStorageKey) === "true");
 
     if (sessionUserId) {
       void supabase.from("user_settings").upsert({
@@ -219,17 +221,27 @@ export function LeetFlash() {
         random_mode: randomMode
       });
 
-      void supabase.from("user_question_progress").upsert({
-        user_id: sessionUserId,
-        question_id: activeQuestionId,
-        seen: true,
-        last_seen_at: new Date().toISOString()
-      });
+      void supabase
+        .from("user_question_progress")
+        .select("seen")
+        .eq("user_id", sessionUserId)
+        .eq("question_id", activeQuestionId)
+        .maybeSingle()
+        .then((result) => {
+          if (cancelled) return;
+          const savedSeen = Boolean(result.data?.seen);
+          setSeen(savedSeen);
+          writeStoredValue(seenStorageKey, String(savedSeen));
+        });
     }
 
     if (activeProblem) {
       void loadOrGenerateSolution(activeProblem);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeQuestionId, activeProblem?.id, randomMode, sessionUserId]);
 
   useEffect(() => {
