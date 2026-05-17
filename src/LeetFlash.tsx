@@ -1,4 +1,3 @@
-import { FlashList } from "@shopify/flash-list";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -50,6 +49,10 @@ const defaultFoldState: FoldState = {
   approach: false,
   solution: true
 };
+const missingExamplesText =
+  "Examples are not loaded for this card yet. Open the LeetCode link to view the original examples.";
+const missingConstraintsText =
+  "Constraints are not loaded for this card yet. Open the LeetCode link to view the original constraints.";
 
 type QuestionSolution = {
   question_id: number;
@@ -60,7 +63,7 @@ type QuestionSolution = {
 
 export function LeetFlash() {
   const queryClient = useQueryClient();
-  const listRef = useRef<FlashList<LeetProblem>>(null);
+  const listRef = useRef<ScrollView>(null);
   const initialQuestionId =
     readQuestionNumberFromUrl() ?? (Number(readStoredValue(lastQuestionKey)) || 1);
   const initialCursor = Math.max(initialQuestionId - 1, 0);
@@ -79,6 +82,8 @@ export function LeetFlash() {
   const [solutionMap, setSolutionMap] = useState<Record<number, QuestionSolution>>({});
   const [generatingIds, setGeneratingIds] = useState<Record<number, boolean>>({});
   const [foldState, setFoldState] = useState<FoldState>(() => readFoldState());
+  const [pageStartedAt, setPageStartedAt] = useState(Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const query = useInfiniteQuery({
     queryKey,
@@ -157,6 +162,9 @@ export function LeetFlash() {
   useEffect(() => {
     if (!activeProblem) return;
 
+    const now = Date.now();
+    setPageStartedAt(now);
+    setElapsedSeconds(0);
     writeStoredValue(lastQuestionKey, String(activeProblem.id));
     writeQuestionUrl(activeProblem.id);
     setJumpInput(String(activeProblem.id));
@@ -182,12 +190,20 @@ export function LeetFlash() {
     void loadOrGenerateSolution(activeProblem);
   }, [activeProblem?.id, randomMode, sessionUserId]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - pageStartedAt) / 1000));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [pageStartedAt]);
+
   const goTo = (nextIndex: number) => {
     if (problems.length === 0) return;
 
     const clamped = Math.max(0, Math.min(nextIndex, problems.length - 1));
     setIndex(clamped);
-    listRef.current?.scrollToIndex({ index: clamped, animated: true });
+    listRef.current?.scrollTo({ x: clamped * width, animated: true });
   };
 
   const goNext = () => {
@@ -224,7 +240,7 @@ export function LeetFlash() {
     setTimeout(() => {
       const nextIndex = problems.length;
       setIndex(nextIndex);
-      listRef.current?.scrollToIndex({ index: nextIndex, animated: true });
+      listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
     }, 50);
   };
 
@@ -348,6 +364,10 @@ export function LeetFlash() {
             </View>
           </Pressable>
 
+          <View style={styles.timerPill}>
+            <Text style={styles.timerText}>{formatElapsed(elapsedSeconds)}</Text>
+          </View>
+
           <Pressable
             accessibilityLabel="Next problem"
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
@@ -425,39 +445,46 @@ export function LeetFlash() {
               <ActivityIndicator color="#111827" />
             </View>
           ) : (
-            <FlashList
+            <ScrollView
               ref={listRef}
-              data={problems}
               horizontal
               pagingEnabled
+              snapToInterval={width}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              disableIntervalMomentum
               bounces={false}
-              estimatedItemSize={Math.max(width, 320)}
               showsHorizontalScrollIndicator={false}
-              keyExtractor={(item, itemIndex) => `${item.id}-${itemIndex}`}
-              onEndReachedThreshold={0.7}
-              onEndReached={() => {
-                if (query.hasNextPage && !query.isFetchingNextPage) {
-                  void query.fetchNextPage();
-                }
-              }}
+              scrollEventThrottle={16}
               onMomentumScrollEnd={(event) => {
                 const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
                 setIndex(nextIndex);
+                if (problems.length - nextIndex <= 4 && query.hasNextPage) {
+                  void query.fetchNextPage();
+                }
               }}
-              renderItem={({ item }) => (
-                <View style={[styles.itemFrame, { width, height: listHeight }]}>
-                  <ProblemCard
-                    problem={item.id === renderedProblem?.id ? renderedProblem : item}
-                    height={listHeight}
-                    isGeneratingSolution={Boolean(generatingIds[item.id])}
-                    foldState={foldState}
-                    onToggleFold={updateFoldState}
-                    showSolution={showSolution}
-                    onToggleSolution={() => setShowSolution((value) => !value)}
-                  />
-                </View>
-              )}
-            />
+              onScrollEndDrag={(event) => {
+                const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
+              }}
+            >
+              {problems.map((item, itemIndex) => (
+                  <View
+                    key={`${item.id}-${itemIndex}`}
+                    style={[styles.itemFrame, { width, height: listHeight }]}
+                  >
+                    <ProblemCard
+                      problem={item.id === renderedProblem?.id ? renderedProblem : item}
+                      height={listHeight}
+                      isGeneratingSolution={Boolean(generatingIds[item.id])}
+                      foldState={foldState}
+                      onToggleFold={updateFoldState}
+                      showSolution={showSolution}
+                      onToggleSolution={() => setShowSolution((value) => !value)}
+                    />
+                  </View>
+                ))}
+            </ScrollView>
           )}
         </View>
       </View>
@@ -499,31 +526,33 @@ function ProblemCard({
         <View style={styles.titleRow}>
           <View style={styles.titleText}>
             <Text style={styles.title}>{problem.title}</Text>
-            <Text style={styles.meta}>{problem.difficulty}</Text>
+            <Text style={[styles.meta, difficultyStyle(problem.difficulty)]}>
+              {problem.difficulty}
+            </Text>
           </View>
         </View>
 
         <Text style={styles.prompt}>{promptParts.statement}</Text>
 
-        {promptParts.examples ? (
-          <FoldableSection
-            title="Examples"
-            open={foldState.examples}
-            onToggle={() => onToggleFold("examples")}
-          >
-            <Text style={styles.promptDetail}>{promptParts.examples}</Text>
-          </FoldableSection>
-        ) : null}
+        <FoldableSection
+          title="Examples"
+          open={foldState.examples}
+          onToggle={() => onToggleFold("examples")}
+        >
+          <Text style={styles.promptDetail}>
+            {promptParts.examples || missingExamplesText}
+          </Text>
+        </FoldableSection>
 
-        {promptParts.constraints ? (
-          <FoldableSection
-            title="Constraints"
-            open={foldState.constraints}
-            onToggle={() => onToggleFold("constraints")}
-          >
-            <Text style={styles.promptDetail}>{promptParts.constraints}</Text>
-          </FoldableSection>
-        ) : null}
+        <FoldableSection
+          title="Constraints"
+          open={foldState.constraints}
+          onToggle={() => onToggleFold("constraints")}
+        >
+          <Text style={styles.promptDetail}>
+            {promptParts.constraints || missingConstraintsText}
+          </Text>
+        </FoldableSection>
 
         {promptParts.followUp ? (
           <Text style={styles.followUp}>{promptParts.followUp}</Text>
@@ -611,6 +640,26 @@ function randomQuestionId(currentId?: number): number {
   return next === currentId ? randomQuestionId(currentId) : next;
 }
 
+function difficultyStyle(difficulty: LeetProblem["difficulty"]) {
+  switch (difficulty) {
+    case "Easy":
+      return styles.metaEasy;
+    case "Medium":
+      return styles.metaMedium;
+    case "Hard":
+      return styles.metaHard;
+    default:
+      return null;
+  }
+}
+
+function formatElapsed(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function readFoldState(): FoldState {
   const raw = readStoredValue(foldStateKey);
   if (!raw) return defaultFoldState;
@@ -636,7 +685,11 @@ function FoldableSection({ title, open, onToggle, children }: FoldableSectionPro
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         style={({ pressed }) => [styles.foldableHeader, pressed && styles.pressed]}
-        onPress={onToggle}
+        hitSlop={8}
+        onPressIn={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
       >
         <Text style={styles.foldableTitle}>{title}</Text>
         <Text style={styles.foldableChevron}>{open ? "⌃" : "⌄"}</Text>
@@ -813,6 +866,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 6
   },
+  timerPill: {
+    position: "absolute",
+    right: 62,
+    height: 30,
+    minWidth: 52,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 6,
+    backgroundColor: "#ffffff"
+  },
+  timerText: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "800"
+  },
   problemNumber: {
     color: "#111827",
     fontSize: 16,
@@ -902,7 +973,7 @@ const styles = StyleSheet.create({
     height: 36,
     paddingHorizontal: 10,
     color: "#111827",
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "700"
   },
   jumpButton: {
@@ -969,10 +1040,26 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   meta: {
-    color: "#64748b",
     fontSize: 13,
     fontWeight: "700",
-    textTransform: "uppercase"
+    textTransform: "uppercase",
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: "hidden"
+  },
+  metaEasy: {
+    color: "#0f766e",
+    backgroundColor: "#ccfbf1"
+  },
+  metaMedium: {
+    color: "#a16207",
+    backgroundColor: "#fef3c7"
+  },
+  metaHard: {
+    color: "#b91c1c",
+    backgroundColor: "#fee2e2"
   },
   prompt: {
     color: "#1f2937",
@@ -1116,8 +1203,8 @@ const styles = StyleSheet.create({
       android: "monospace",
       default: "monospace"
     }),
-    fontSize: 14,
-    lineHeight: 20
+    fontSize: 16,
+    lineHeight: 22
   },
   bottomSpacer: {
     height: 24

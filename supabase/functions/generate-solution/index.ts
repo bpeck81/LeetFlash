@@ -91,7 +91,7 @@ Deno.serve(async (request) => {
   } catch (error) {
     return json(
       {
-        error: error instanceof Error ? error.message : "Unable to generate solution"
+        error: describeError(error)
       },
       500
     );
@@ -112,6 +112,17 @@ function mustGetEnv(name: string) {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`${name} is not configured`);
   return value;
+}
+
+function describeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unable to generate solution";
+  }
 }
 
 async function generateWithOpenAI(
