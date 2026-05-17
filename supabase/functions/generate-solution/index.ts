@@ -75,25 +75,24 @@ Deno.serve(async (request) => {
     );
 
     const generated = await generateWithOpenAI(openaiKey, model, question);
+    const generatedCard = {
+      question_id: question.id,
+      slug: question.slug,
+      title: question.title,
+      difficulty: question.difficulty,
+      prompt: generated.prompt,
+      examples: generated.examples,
+      constraints_text: generated.constraints,
+      starter_code: question.starterCode ?? "class Solution:\n    pass",
+      approach: generated.approach,
+      solution: generated.solution,
+      generated_by: model,
+      generated_at: new Date().toISOString()
+    };
+
     const saved = await supabase
       .from("question_solutions")
-      .upsert(
-        {
-          question_id: question.id,
-          slug: question.slug,
-          title: question.title,
-          difficulty: question.difficulty,
-          prompt: generated.prompt,
-          examples: generated.examples,
-          constraints_text: generated.constraints,
-          starter_code: question.starterCode ?? "class Solution:\n    pass",
-          approach: generated.approach,
-          solution: generated.solution,
-          generated_by: model,
-          generated_at: new Date().toISOString()
-        },
-        { onConflict: "question_id" }
-      )
+      .upsert(generatedCard, { onConflict: "question_id" })
       .select("*")
       .single();
 

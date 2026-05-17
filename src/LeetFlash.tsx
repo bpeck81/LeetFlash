@@ -207,8 +207,18 @@ export function LeetFlash() {
     if (problems.length === 0) return;
 
     const clamped = Math.max(0, Math.min(nextIndex, problems.length - 1));
-    setIndex(clamped);
+    setActiveIndex(clamped);
     listRef.current?.scrollTo({ x: clamped * width, animated: true });
+  };
+
+  const setActiveIndex = (nextIndex: number) => {
+    const clamped = Math.max(0, Math.min(nextIndex, Math.max(problems.length - 1, 0)));
+    setIndex((current) => {
+      if (current === clamped) return current;
+      setPageStartedAt(Date.now());
+      setElapsedSeconds(0);
+      return clamped;
+    });
   };
 
   const goNext = () => {
@@ -244,7 +254,7 @@ export function LeetFlash() {
 
     setTimeout(() => {
       const nextIndex = problems.length;
-      setIndex(nextIndex);
+      setActiveIndex(nextIndex);
       listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
     }, 50);
   };
@@ -367,10 +377,6 @@ export function LeetFlash() {
             </View>
           </Pressable>
 
-          <View style={styles.timerPill}>
-            <Text style={styles.timerText}>{formatElapsed(elapsedSeconds)}</Text>
-          </View>
-
           <Pressable
             accessibilityLabel="Next problem"
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
@@ -381,6 +387,10 @@ export function LeetFlash() {
         </View>
 
         <View style={styles.controlsBar}>
+          <View style={styles.timerPill}>
+            <Text style={styles.timerText}>{formatElapsed(elapsedSeconds)}</Text>
+          </View>
+
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: seen }}
@@ -461,13 +471,14 @@ export function LeetFlash() {
               scrollEventThrottle={16}
               onMomentumScrollEnd={(event) => {
                 const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
-                setIndex(nextIndex);
+                setActiveIndex(nextIndex);
                 if (problems.length - nextIndex <= 4 && query.hasNextPage) {
                   void query.fetchNextPage();
                 }
               }}
               onScrollEndDrag={(event) => {
                 const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+                setActiveIndex(nextIndex);
                 listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
               }}
             >
@@ -869,9 +880,7 @@ const styles = StyleSheet.create({
     borderRadius: 6
   },
   timerPill: {
-    position: "absolute",
-    right: 62,
-    height: 30,
+    height: 36,
     minWidth: 52,
     paddingHorizontal: 10,
     alignItems: "center",
@@ -1064,16 +1073,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fee2e2"
   },
   prompt: {
-    color: "#1f2937",
+    color: "#f8fafc",
     fontSize: 16,
     lineHeight: 25
   },
   statementBox: {
     padding: 14,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#1f2937",
     borderRadius: 8,
-    backgroundColor: "#ffffff"
+    backgroundColor: "#020617"
   },
   promptDetail: {
     color: "#334155",
