@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "LeetFlash",
+    "slug": "leetflash",
+    "version": "1.0.0",
+    "orientation": "default",
+    "scheme": "leetflash",
+    "userInterfaceStyle": "light",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    }
+  }
+}
