@@ -31,10 +31,7 @@ export async function fetchProblemPage(cursor = 0): Promise<ProblemPage> {
         return {
           ...problem,
           bullets: curated?.bullets ?? problem.bullets,
-          solution:
-            curated?.solution ??
-            problem.solution ??
-            `# Curated Python solution not added yet.\n${problem.starterCode ?? "class Solution:\n    pass"}`,
+          solution: curated?.solution ?? problem.solution ?? "",
           starterCode: problem.starterCode ?? curated?.starterCode,
           hasSolution: Boolean(curated?.solution),
           source: "leetcode"

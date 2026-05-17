@@ -49,10 +49,8 @@ const defaultFoldState: FoldState = {
   approach: false,
   solution: true
 };
-const missingExamplesText =
-  "Examples are not loaded for this card yet. Open the LeetCode link to view the original examples.";
-const missingConstraintsText =
-  "Constraints are not loaded for this card yet. Open the LeetCode link to view the original constraints.";
+const missingExamplesText = "Getting examples with AI.";
+const missingConstraintsText = "Getting constraints with AI.";
 
 type QuestionSolution = {
   question_id: number;
@@ -520,8 +518,10 @@ function ProblemCard({
   onToggleFold
 }: ProblemCardProps) {
   const promptParts = useMemo(() => splitProblemPrompt(problem.prompt), [problem.prompt]);
+  const needsGeneratedCard = isPlaceholderProblem(problem);
   const examples = problem.examples ?? promptParts.examples;
   const constraints = problem.constraints ?? promptParts.constraints;
+  const statement = needsGeneratedCard ? "Getting problem with AI." : promptParts.statement;
 
   return (
     <ScrollView
@@ -543,7 +543,11 @@ function ProblemCard({
         </View>
 
         <View style={styles.statementBox}>
-          <Text style={styles.prompt}>{promptParts.statement}</Text>
+          {isGeneratingSolution && needsGeneratedCard ? (
+            <MiniSkeleton label="Getting problem with AI" />
+          ) : (
+            <Text style={styles.prompt}>{statement}</Text>
+          )}
         </View>
 
         <FoldableSection
@@ -551,9 +555,11 @@ function ProblemCard({
           open={foldState.examples}
           onToggle={() => onToggleFold("examples")}
         >
-          <Text style={styles.promptDetail}>
-            {examples || missingExamplesText}
-          </Text>
+          {isGeneratingSolution && !examples ? (
+            <MiniSkeleton label="Getting examples with AI" />
+          ) : (
+            <Text style={styles.promptDetail}>{examples || missingExamplesText}</Text>
+          )}
         </FoldableSection>
 
         <FoldableSection
@@ -561,9 +567,13 @@ function ProblemCard({
           open={foldState.constraints}
           onToggle={() => onToggleFold("constraints")}
         >
-          <Text style={styles.promptDetail}>
-            {constraints || missingConstraintsText}
-          </Text>
+          {isGeneratingSolution && !constraints ? (
+            <MiniSkeleton label="Getting constraints with AI" />
+          ) : (
+            <Text style={styles.promptDetail}>
+              {constraints || missingConstraintsText}
+            </Text>
+          )}
         </FoldableSection>
 
         {promptParts.followUp ? (
@@ -577,13 +587,17 @@ function ProblemCard({
           open={foldState.approach}
           onToggle={() => onToggleFold("approach")}
         >
-          <View style={styles.bullets}>
-            {problem.bullets.map((bullet) => (
-              <Text key={bullet} style={styles.bullet}>
-                • {bullet}
-              </Text>
-            ))}
-          </View>
+          {isGeneratingSolution && needsGeneratedCard ? (
+            <MiniSkeleton label="Getting approach with AI" />
+          ) : (
+            <View style={styles.bullets}>
+              {problem.bullets.map((bullet) => (
+                <Text key={bullet} style={styles.bullet}>
+                  • {bullet}
+                </Text>
+              ))}
+            </View>
+          )}
         </FoldableSection>
       </View>
 
@@ -636,6 +650,16 @@ function SolutionSkeleton() {
   );
 }
 
+function MiniSkeleton({ label }: { label: string }) {
+  return (
+    <View style={styles.skeletonBlock}>
+      <Text style={styles.skeletonTitle}>{label}</Text>
+      <View style={styles.skeletonLine} />
+      <View style={[styles.skeletonLine, styles.skeletonLineWide]} />
+    </View>
+  );
+}
+
 function randomQuestionId(currentId?: number): number {
   const next = Math.floor(Math.random() * 3934) + 1;
   return next === currentId ? randomQuestionId(currentId) : next;
@@ -650,6 +674,16 @@ function isCompleteCard(card: unknown): card is QuestionSolution {
       candidate?.constraints_text &&
       candidate?.solution &&
       candidate?.approach?.length
+  );
+}
+
+function isPlaceholderProblem(problem: LeetProblem) {
+  return (
+    problem.prompt.includes("premium problem") ||
+    problem.solution.includes("Curated Python solution not added yet") ||
+    !problem.solution.trim() ||
+    !problem.examples ||
+    !problem.constraints
   );
 }
 
@@ -830,14 +864,14 @@ function pythonStyleForToken(token: string) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f8fafc"
+    backgroundColor: "#f5f7fb"
   },
   shell: {
     flex: 1,
     alignSelf: "center",
     width: "100%",
     maxWidth: 840,
-    backgroundColor: "#f8fafc"
+    backgroundColor: "#f5f7fb"
   },
   topBar: {
     height: 56,
@@ -846,7 +880,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#d1d5db"
+    borderBottomColor: "#d8dee9"
   },
   controlsBar: {
     minHeight: 52,
@@ -856,8 +890,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#d1d5db",
-    backgroundColor: "#f8fafc"
+    borderBottomColor: "#d8dee9",
+    backgroundColor: "#f5f7fb"
   },
   iconButton: {
     width: 40,
@@ -886,12 +920,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#d8dee9",
     borderRadius: 6,
     backgroundColor: "#ffffff"
   },
   timerText: {
-    color: "#334155",
+    color: "#3b4656",
     fontSize: 13,
     fontWeight: "800"
   },
@@ -922,32 +956,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#d8dee9",
     borderRadius: 6,
     backgroundColor: "#ffffff"
   },
   seenControlChecked: {
-    borderColor: "#0f766e",
-    backgroundColor: "#ecfdf5"
+    borderColor: "#15aabf",
+    backgroundColor: "#e7f8fa"
   },
   checkbox: {
     width: 18,
     height: 18,
     borderWidth: 1,
-    borderColor: "#94a3b8",
+    borderColor: "#9aa6b2",
     borderRadius: 4,
-    color: "#0f766e",
+    color: "#0f8a9d",
     textAlign: "center",
     lineHeight: 16,
     fontSize: 13,
     fontWeight: "900"
   },
   checkboxChecked: {
-    borderColor: "#0f766e",
-    backgroundColor: "#ccfbf1"
+    borderColor: "#15aabf",
+    backgroundColor: "#d5f3f7"
   },
   controlText: {
-    color: "#334155",
+    color: "#3b4656",
     fontSize: 13,
     fontWeight: "800"
   },
@@ -957,16 +991,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#d8dee9",
     borderRadius: 6,
     backgroundColor: "#ffffff"
   },
   modeControlActive: {
-    borderColor: "#2563eb",
-    backgroundColor: "#eff6ff"
+    borderColor: "#15aabf",
+    backgroundColor: "#e7f8fa"
   },
   modeControlTextActive: {
-    color: "#1d4ed8"
+    color: "#0f8a9d"
   },
   jumpControl: {
     marginLeft: "auto",
@@ -974,7 +1008,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#d8dee9",
     borderRadius: 6,
     backgroundColor: "#ffffff",
     overflow: "hidden"
@@ -993,8 +1027,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: 1,
-    borderLeftColor: "#cbd5e1",
-    backgroundColor: "#f1f5f9"
+    borderLeftColor: "#d8dee9",
+    backgroundColor: "#eef2f7"
   },
   jumpButtonText: {
     color: "#111827",
@@ -1025,11 +1059,11 @@ const styles = StyleSheet.create({
   section: {
     paddingBottom: 18,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#cbd5e1",
+    borderBottomColor: "#d8dee9",
     gap: 12
   },
   sectionLabel: {
-    color: "#64748b",
+    color: "#667085",
     fontSize: 12,
     fontWeight: "800",
     textTransform: "uppercase"
@@ -1045,7 +1079,7 @@ const styles = StyleSheet.create({
     gap: 4
   },
   title: {
-    color: "#0f172a",
+    color: "#111827",
     fontSize: 26,
     lineHeight: 32,
     fontWeight: "800"
@@ -1061,31 +1095,31 @@ const styles = StyleSheet.create({
     overflow: "hidden"
   },
   metaEasy: {
-    color: "#0f766e",
-    backgroundColor: "#ccfbf1"
+    color: "#0f8a9d",
+    backgroundColor: "#d8f5f8"
   },
   metaMedium: {
-    color: "#a16207",
-    backgroundColor: "#fef3c7"
+    color: "#946200",
+    backgroundColor: "#fff3c4"
   },
   metaHard: {
-    color: "#b91c1c",
-    backgroundColor: "#fee2e2"
+    color: "#b42318",
+    backgroundColor: "#ffe4e0"
   },
   prompt: {
-    color: "#f8fafc",
+    color: "#e8edf3",
     fontSize: 16,
     lineHeight: 25
   },
   statementBox: {
     padding: 14,
     borderWidth: 1,
-    borderColor: "#1f2937",
+    borderColor: "#263244",
     borderRadius: 8,
-    backgroundColor: "#020617"
+    backgroundColor: "#111827"
   },
   promptDetail: {
-    color: "#334155",
+    color: "#e8edf3",
     fontFamily: Platform.select({
       ios: "Menlo",
       android: "monospace",
@@ -1095,16 +1129,16 @@ const styles = StyleSheet.create({
     lineHeight: 20
   },
   followUp: {
-    color: "#475569",
+    color: "#596579",
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "700"
   },
   foldable: {
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#263244",
     borderRadius: 8,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#111827",
     overflow: "hidden"
   },
   foldableHeader: {
@@ -1115,12 +1149,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between"
   },
   foldableTitle: {
-    color: "#111827",
+    color: "#e8edf3",
     fontSize: 14,
     fontWeight: "800"
   },
   foldableChevron: {
-    color: "#64748b",
+    color: "#94a3b8",
     fontSize: 18,
     fontWeight: "800",
     lineHeight: 20
@@ -1130,13 +1164,13 @@ const styles = StyleSheet.create({
     paddingTop: 2,
     paddingBottom: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#e5e7eb"
+    borderTopColor: "#263244"
   },
   bullets: {
     gap: 6
   },
   bullet: {
-    color: "#334155",
+    color: "#e8edf3",
     fontSize: 15,
     lineHeight: 22
   },
@@ -1144,17 +1178,17 @@ const styles = StyleSheet.create({
     minHeight: 156,
     padding: 14,
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#263244",
     borderRadius: 8,
     backgroundColor: "#111827"
   },
   solutionHidden: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#e5e7eb"
+    backgroundColor: "#e6eaf0"
   },
   hiddenText: {
-    color: "#4b5563",
+    color: "#596579",
     fontSize: 14,
     fontWeight: "700"
   },
@@ -1162,7 +1196,7 @@ const styles = StyleSheet.create({
     gap: 10
   },
   skeletonTitle: {
-    color: "#e5e7eb",
+    color: "#e8edf3",
     fontSize: 14,
     fontWeight: "800",
     marginBottom: 2
@@ -1180,7 +1214,7 @@ const styles = StyleSheet.create({
     width: "48%"
   },
   code: {
-    color: "#f8fafc",
+    color: "#e8edf3",
     fontFamily: Platform.select({
       ios: "Menlo",
       android: "monospace",
@@ -1190,11 +1224,11 @@ const styles = StyleSheet.create({
     lineHeight: 19
   },
   codeKeyword: {
-    color: "#93c5fd",
+    color: "#7dd3fc",
     fontWeight: "700"
   },
   codeString: {
-    color: "#fde68a"
+    color: "#facc15"
   },
   codeNumber: {
     color: "#c4b5fd"
@@ -1203,7 +1237,7 @@ const styles = StyleSheet.create({
     color: "#94a3b8"
   },
   practiceLabel: {
-    color: "#334155",
+    color: "#3b4656",
     fontSize: 13,
     fontWeight: "800",
     textTransform: "uppercase"
@@ -1212,7 +1246,7 @@ const styles = StyleSheet.create({
     minHeight: 132,
     padding: 12,
     borderWidth: 1,
-    borderColor: "#cbd5e1",
+    borderColor: "#d8dee9",
     borderRadius: 8,
     backgroundColor: "#ffffff",
     color: "#111827",

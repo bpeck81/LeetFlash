@@ -150,7 +150,7 @@ async function generateWithOpenAI(
     body: JSON.stringify({
       model,
       instructions:
-        "You write concise coding interview study cards. Return only valid JSON matching the schema. The solution must be Python 3 in LeetCode class Solution style. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
+        "You write concise coding interview study cards. Return only valid JSON matching the schema. The solution must be Python 3 in LeetCode class Solution style. Include concise, useful comments in the code for key algorithm steps, but do not comment every line. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
       input: [
         {
           role: "user",
