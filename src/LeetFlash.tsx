@@ -101,20 +101,6 @@ export function LeetFlash() {
   );
 
   const activeProblem = problems[index];
-  const activeSolution = activeProblem ? solutionMap[activeProblem.id] : undefined;
-  const renderedProblem =
-    activeProblem && activeSolution
-      ? {
-          ...activeProblem,
-          prompt: activeSolution.prompt || activeProblem.prompt,
-          examples: activeSolution.examples,
-          constraints: activeSolution.constraints_text,
-          bullets: activeSolution.approach,
-          solution: activeSolution.solution,
-          starterCode: activeSolution.starter_code,
-          hasSolution: true
-        }
-      : activeProblem;
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener("change", ({ window }) => {
@@ -194,6 +180,14 @@ export function LeetFlash() {
 
     void loadOrGenerateSolution(activeProblem);
   }, [activeProblem?.id, randomMode, sessionUserId]);
+
+  useEffect(() => {
+    problems.slice(index, index + 3).forEach((problem) => {
+      if (isPlaceholderProblem(problem)) {
+        void loadOrGenerateSolution(problem);
+      }
+    });
+  }, [index, problems, solutionMap]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -496,20 +490,24 @@ export function LeetFlash() {
                 listRef.current?.scrollTo({ x: nextIndex * width, animated: true });
               }}
             >
-              {problems.map((item, itemIndex) => (
+              {problems.map((item, itemIndex) => {
+                const renderedItem = withGeneratedCard(item, solutionMap[item.id]);
+
+                return (
                   <View
                     key={`${item.id}-${itemIndex}`}
                     style={[styles.itemFrame, { width, height: listHeight }]}
                   >
                     <ProblemCard
-                      problem={item.id === renderedProblem?.id ? renderedProblem : item}
+                      problem={renderedItem}
                       height={listHeight}
-                    isGeneratingSolution={Boolean(generatingIds[item.id])}
-                    foldState={foldState}
-                    onToggleFold={updateFoldState}
-                  />
+                      isGeneratingSolution={Boolean(generatingIds[item.id])}
+                      foldState={foldState}
+                      onToggleFold={updateFoldState}
+                    />
                   </View>
-                ))}
+                );
+              })}
             </ScrollView>
           )}
         </View>
@@ -685,18 +683,45 @@ function isCompleteCard(card: unknown): card is QuestionSolution {
   const candidate = card as Partial<QuestionSolution> | null;
 
   return Boolean(
-    candidate?.prompt &&
-      candidate?.examples &&
-      candidate?.constraints_text &&
-      candidate?.solution &&
+    isUsefulGeneratedText(candidate?.prompt) &&
+      isUsefulGeneratedText(candidate?.examples) &&
+      isUsefulGeneratedText(candidate?.constraints_text) &&
+      isUsefulGeneratedText(candidate?.solution) &&
       candidate?.approach?.length
   );
+}
+
+function isUsefulGeneratedText(value?: string) {
+  if (!value?.trim()) return false;
+  const lower = value.toLowerCase();
+
+  return ![
+    "not provided",
+    "no explicit examples",
+    "examples are not loaded",
+    "constraints are not loaded",
+    "getting"
+  ].some((phrase) => lower.includes(phrase));
+}
+
+function withGeneratedCard(problem: LeetProblem, solution?: QuestionSolution) {
+  if (!solution) return problem;
+
+  return {
+    ...problem,
+    prompt: solution.prompt || problem.prompt,
+    examples: solution.examples,
+    constraints: solution.constraints_text,
+    bullets: solution.approach,
+    solution: solution.solution,
+    starterCode: solution.starter_code,
+    hasSolution: true
+  };
 }
 
 function isPlaceholderProblem(problem: LeetProblem) {
   return (
     problem.prompt.includes("premium problem") ||
-    problem.solution.includes("Curated Python solution not added yet") ||
     !problem.solution.trim() ||
     !problem.examples ||
     !problem.constraints

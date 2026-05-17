@@ -60,21 +60,13 @@ Deno.serve(async (request) => {
       return json({ solution: existing.data });
     }
 
-    await supabase.from("question_solutions").upsert(
-      {
-        question_id: question.id,
-        slug: question.slug,
-        title: question.title,
-        difficulty: question.difficulty,
-        prompt: question.prompt,
-        examples: question.examples ?? "",
-        constraints_text: question.constraints ?? "",
-        starter_code: question.starterCode ?? "class Solution:\n    pass"
-      },
-      { onConflict: "question_id" }
+    const generated = normalizeGeneratedCard(
+      await generateWithOpenAI(openaiKey, model, question),
+      question
     );
-
-    const generated = await generateWithOpenAI(openaiKey, model, question);
+    if (!isCompleteGeneratedCard(generated)) {
+      throw new Error("OpenAI returned an incomplete study card");
+    }
     const generatedCard = {
       question_id: question.id,
       slug: question.slug,
@@ -136,6 +128,58 @@ function describeError(error: unknown) {
   }
 }
 
+function isCompleteGeneratedCard(card: {
+  prompt?: string;
+  examples?: string;
+  constraints?: string;
+  approach?: string[];
+  solution?: string;
+}) {
+  return Boolean(
+    isUsefulText(card.prompt) &&
+      isUsefulText(card.examples) &&
+      isUsefulText(card.constraints) &&
+      card.approach?.length &&
+      isUsefulText(card.solution)
+  );
+}
+
+function normalizeGeneratedCard(
+  card: {
+    prompt: string;
+    examples: string;
+    constraints: string;
+    approach: string[];
+    solution: string;
+  },
+  question: GenerateRequest["question"]
+) {
+  return {
+    ...card,
+    prompt: isUsefulText(card.prompt)
+      ? card.prompt
+      : `Original practice problem based on "${question.title}". Write a Python solution matching the provided starter signature.`,
+    examples: isUsefulText(card.examples)
+      ? card.examples
+      : `Example 1: Use a small representative input for ${question.title} and produce the expected output. Example 2: Include an edge case such as an empty, single-node, or minimal input when applicable.`,
+    constraints: isUsefulText(card.constraints)
+      ? card.constraints
+      : "Use the provided function signature. Preserve the required output behavior. Aim for efficient time complexity and avoid mutating immutable inputs."
+  };
+}
+
+function isUsefulText(value?: string) {
+  if (!value?.trim()) return false;
+  const lower = value.toLowerCase();
+
+  return ![
+    "not provided",
+    "examples are not loaded",
+    "constraints are not loaded",
+    "getting"
+  ].some((phrase) => lower.includes(phrase));
+}
+
 async function generateWithOpenAI(
   apiKey: string,
   model: string,
@@ -150,7 +194,7 @@ async function generateWithOpenAI(
     body: JSON.stringify({
       model,
       instructions:
-        "You write concise coding interview study cards. Return only valid JSON matching the schema. The solution must be Python 3 in LeetCode class Solution style. Include concise, useful comments in the code for key algorithm steps, but do not comment every line. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
+        "You write complete coding interview study cards. Return only valid JSON matching the schema. Always fill prompt, examples, constraints, approach, and solution with useful original content. Never return placeholders like 'not provided', 'no examples', or 'open LeetCode'. The solution must be Python 3 in LeetCode class Solution style. Include concise, useful comments in the code for key algorithm steps, but do not comment every line. Keep approach bullets short and actionable. If the original prompt is unavailable or premium-gated, create an original practice problem based on the title and common interview interpretation; do not claim it is the original premium text.",
       input: [
         {
           role: "user",
