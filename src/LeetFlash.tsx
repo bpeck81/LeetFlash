@@ -743,6 +743,20 @@ function ProblemCard({
           open={foldState.solution}
           onToggle={() => onToggleFold("solution")}
         >
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.solution}
+            contentContainerStyle={styles.solutionContent}
+          >
+            {isGeneratingSolution ? (
+              <SolutionSkeleton />
+            ) : (
+              <SyntaxHighlightedCode code={renderedSolution} />
+            )}
+          </ScrollView>
+
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: hideSolutionComments }}
@@ -763,20 +777,6 @@ function ProblemCard({
             </Text>
             <Text style={styles.solutionOptionText}>Hide comments</Text>
           </Pressable>
-
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={styles.solution}
-            contentContainerStyle={styles.solutionContent}
-          >
-            {isGeneratingSolution ? (
-              <SolutionSkeleton />
-            ) : (
-              <SyntaxHighlightedCode code={renderedSolution} />
-            )}
-          </ScrollView>
         </FoldableSection>
       </View>
 
@@ -1427,7 +1427,7 @@ const styles = StyleSheet.create({
   solutionOption: {
     alignSelf: "flex-start",
     minHeight: 32,
-    marginBottom: 10,
+    marginTop: 10,
     paddingHorizontal: 8,
     flexDirection: "row",
     alignItems: "center",
